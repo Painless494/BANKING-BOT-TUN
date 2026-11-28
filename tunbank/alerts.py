@@ -312,7 +312,15 @@ class AlertService:
     def __init__(self, db):
         self.db = db
         self.bot = None
+        self.only_guild_id = None       # set for an alliance on a shared bot: alerts may only go to channels of ITS OWN server
         self._lock_announced = None
+
+    def _own_channel(self, ch) -> bool:
+        """False when this alliance is limited to one server and the channel belongs to another (or to no server)."""
+        if not self.only_guild_id:
+            return True
+        guild = getattr(ch, "guild", None)
+        return getattr(guild, "id", None) == self.only_guild_id
 
     def _log(self, card: Card, channel: str, ok: bool, err: str | None = None):
         try:
@@ -378,6 +386,9 @@ class AlertService:
             return False
         try:
             ch = self.bot.get_channel(int(chan)) or await self.bot.fetch_channel(int(chan))
+            if not self._own_channel(ch):
+                log.warning("config audit channel %s is not in this alliance's own server; nothing was posted", chan)
+                return False
             await send_card(ch, card)
             return True
         except Exception as exc:  # noqa: BLE001
@@ -417,6 +428,10 @@ class AlertService:
             return
         try:
             ch = self.bot.get_channel(int(chan_id)) or await self.bot.fetch_channel(int(chan_id))
+            if not self._own_channel(ch):
+                self._log(card, f"econ:{chan_id}", False, "channel is not in this alliance's own server")
+                log.warning("ECON alert refused: channel %s is not in this alliance's own server", chan_id)
+                return
             await send_card(ch, card)
             self._log(card, f"econ:{chan_id}", True)
         except Exception as exc:  # noqa: BLE001

@@ -29,7 +29,14 @@ NOT_CONFIGURED = (f"{icons.status('info')} No offshore is configured. Add `OFFSH
 
 
 def register(bank: app_commands.Group, svc: Services):
-    off = svc.offshore
+    class _CurrentOffshore:
+        """The CURRENT alliance's offshore service, looked up every time (never captured at start-up)."""
+        def __getattr__(self, name):
+            return getattr(svc.offshore, name)
+
+        def __bool__(self):
+            return bool(svc.offshore)
+    off = _CurrentOffshore()
 
     async def allowed(interaction) -> bool:
         with svc.db.read() as conn:

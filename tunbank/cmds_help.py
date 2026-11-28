@@ -8,6 +8,7 @@ if CATALOG mentions a command that no longer exists.
 from __future__ import annotations
 
 import discord
+from .tenantui import TenantView
 
 from . import alerts as A
 from . import perms
@@ -73,6 +74,7 @@ CATALOG = {
     "loan add": ("loans", "MINISTER"), "loan deduct": ("loans", "MINISTER"), "loan applypayment": ("loans", "BANKER"),
     "loan adopt": ("loans", "ADMIN"), "loan writeoff": ("loans", "ADMIN"),
     # tax
+    "economy report": ("tax", "FLAG:bank_view_alliance_holdings"), "economy auto": ("tax", "FLAG:bank_view_alliance_holdings"),
     "tax turns": ("tax", "FLAG:bank_view_tax"), "tax dashboard": ("tax", "FLAG:bank_view_tax"), "tax report": ("tax", "FLAG:bank_view_tax"), "tax profile": ("tax", "FLAG:bank_view_tax"), "tax brackets": ("tax", "FLAG:bank_view_tax"),
     "tax exemptions": ("tax", "FLAG:bank_view_tax"), "tax export": ("tax", "FLAG:bank_view_tax"),
     # audit & security
@@ -92,6 +94,18 @@ CATALOG = {
     "bankset setrolelimit": ("config", "ADMIN"), "bankset setnationlimit": ("config", "ADMIN"),
     "bankset requireapproval": ("config", "ADMIN"), "bankset backup": ("config", "ADMIN"), "bankset restorestage": ("config", "ADMIN"),
 }
+# Only present when the bot serves several alliances (see tenancy.py); kept apart so a single-alliance bot has no ghost entries.
+MULTI_CATALOG = {
+    "setup keys": ("config", "ADMIN"), "setup status": ("config", "ADMIN"),
+    "platform add": ("config", "ADMIN"), "platform list": ("config", "ADMIN"), "platform suspend": ("config", "ADMIN"),
+    "platform resume": ("config", "ADMIN"), "platform admins": ("config", "ADMIN"),
+}
+
+
+def lookup(path: str):
+    return CATALOG.get(path) or MULTI_CATALOG.get(path) or (None, None)
+
+
 PER_PAGE = 7
 ORDER = ["ALL", "AUDITOR", "BANKER", "MINISTER", "ADMIN", "FLAG:bank_view_alliance_holdings", "FLAG:bank_view_tax"]
 
@@ -117,7 +131,7 @@ def clean(desc: str) -> str:
 def visible_commands(tree, user_levels: set, category: str):
     out = []
     for path, desc in iter_commands(tree):
-        cat, lvl = CATALOG.get(path, (None, None))
+        cat, lvl = lookup(path)
         if cat != category:
             continue
         if lvl == "ALL" or perms.has(user_levels, lvl):
@@ -157,7 +171,7 @@ def start_card(user_levels: set) -> A.Card:
     return c
 
 
-class HelpView(discord.ui.View):
+class HelpView(TenantView):
     def __init__(self, user_id: int, tree, user_levels: set, quick: list, timeout: float = 900):
         super().__init__(timeout=timeout)
         self.user_id, self.tree, self.levels, self.quick = user_id, tree, user_levels, quick

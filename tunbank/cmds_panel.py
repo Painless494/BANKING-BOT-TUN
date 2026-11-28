@@ -12,6 +12,7 @@ import re
 from typing import Optional
 
 import discord
+from .tenantui import TenantView
 from discord import app_commands
 
 from . import alerts as A
@@ -124,7 +125,7 @@ def register(bankset: app_commands.Group, svc: Services):
         return wrapper
 
     # ---------------------------------------------------------------- the persistent panel
-    class PanelView(discord.ui.View):
+    class PanelView(TenantView):
         def __init__(self):
             super().__init__(timeout=None)               # never expires; re-registered when the bot starts
             S = discord.ButtonStyle

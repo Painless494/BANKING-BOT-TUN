@@ -29,7 +29,9 @@ class Database:
     - `with db.read() as conn:` is for read-only queries.
     """
 
-    def __init__(self, path: str | os.PathLike):
+    def __init__(self, path: str | os.PathLike, extra_migrations_dir: str | os.PathLike | None = None):
+        # extra_migrations_dir: migrations that exist ONLY for this database (the platform registry's), applied after the shared ones.
+        self.extra_migrations_dir = Path(extra_migrations_dir) if extra_migrations_dir else None
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
@@ -111,6 +113,11 @@ class Database:
                 for r in self.conn.execute("SELECT * FROM schema_migrations")
             }
             files = sorted(MIGRATIONS_DIR.glob("[0-9][0-9][0-9]_*.sql"))
+            if self.extra_migrations_dir is not None:
+                files = sorted(files + list(self.extra_migrations_dir.glob("[0-9][0-9][0-9]_*.sql")))
+                versions = [int(f.name[:3]) for f in files]
+                if len(versions) != len(set(versions)):
+                    raise DatabaseError("The shared and platform-only migration files use the same version number twice.")
             pending = []
             for f in files:
                 version = int(f.name[:3])

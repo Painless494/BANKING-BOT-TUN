@@ -19,22 +19,39 @@ from .util import now_iso
 log = logging.getLogger("tunbank.identity")
 STALE_SECONDS = 24 * 3600
 
-_db = None
-_cache: dict[int, dict] = {}          # nation_id -> {name, alliance_id, alliance_name, at (epoch)}
-_dirty: set = set()
+from . import tenantctx
+
+
+class _Slot:
+    """One alliance's name cache. Keyed by the current alliance so one alliance never sees another's nation names."""
+    def __init__(self):
+        self.db = None
+        self.cache: dict[int, dict] = {}      # nation_id -> {name, alliance_id, alliance_name, at (epoch)}
+        self.dirty: set = set()
+
+
+_slots: dict[str, _Slot] = {}
+
+
+def _st() -> _Slot:
+    key = tenantctx.current_key()
+    slot = _slots.get(key)
+    if slot is None:
+        slot = _slots[key] = _Slot()
+    return slot
 
 
 def init(db) -> None:
     """Load what is already known (the saved cache, then the members table) so labels work from the first second."""
-    global _db
-    _db = db
-    _cache.clear()
-    _dirty.clear()
+    st = _st()
+    st.db = db
+    st.cache.clear()
+    st.dirty.clear()
     with db.read() as conn:
         for r in conn.execute("SELECT nation_id, nation_name FROM members WHERE nation_name IS NOT NULL AND nation_name != ''"):
-            _cache[r["nation_id"]] = {"name": r["nation_name"], "alliance_id": None, "alliance_name": None, "at": 0.0}
+            _st().cache[r["nation_id"]] = {"name": r["nation_name"], "alliance_id": None, "alliance_name": None, "at": 0.0}
         for r in conn.execute("SELECT * FROM nation_names"):
-            _cache[r["nation_id"]] = {"name": r["name"], "alliance_id": r["alliance_id"], "alliance_name": r["alliance_name"],
+            _st().cache[r["nation_id"]] = {"name": r["name"], "alliance_id": r["alliance_id"], "alliance_name": r["alliance_name"],
                                       "at": _epoch(r["fetched_at"])}
 
 
@@ -55,10 +72,10 @@ def remember(nation_id, name, alliance_id=None, alliance_name=None) -> None:
     name = (name or "").strip()
     if not nid or not name:
         return
-    old = _cache.get(nid)
-    _cache[nid] = {"name": name, "alliance_id": alliance_id if alliance_id is not None else (old or {}).get("alliance_id"),
+    old = _st().cache.get(nid)
+    _st().cache[nid] = {"name": name, "alliance_id": alliance_id if alliance_id is not None else (old or {}).get("alliance_id"),
                    "alliance_name": alliance_name or (old or {}).get("alliance_name"), "at": time.time()}
-    _dirty.add(nid)
+    _st().dirty.add(nid)
 
 
 def remember_info(info: dict | None) -> None:
@@ -71,15 +88,15 @@ def remember_info(info: dict | None) -> None:
 
 def flush(conn) -> int:
     n = 0
-    for nid in list(_dirty):
-        c = _cache.get(nid)
+    for nid in list(_st().dirty):
+        c = _st().cache.get(nid)
         if not c:
             continue
         conn.execute("INSERT INTO nation_names(nation_id,name,alliance_id,alliance_name,fetched_at) VALUES(?,?,?,?,?) "
                      "ON CONFLICT(nation_id) DO UPDATE SET name=excluded.name, alliance_id=excluded.alliance_id, "
                      "alliance_name=excluded.alliance_name, fetched_at=excluded.fetched_at",
                      (nid, c["name"], c["alliance_id"], c["alliance_name"], now_iso()))
-        _dirty.discard(nid)
+        _st().dirty.discard(nid)
         n += 1
     return n
 
@@ -90,21 +107,21 @@ def name(nation_id) -> str | None:
         nid = int(nation_id)
     except (TypeError, ValueError):
         return None
-    c = _cache.get(nid)
-    if c is None and _db is not None:                 # a member added after start-up: the members table knows the name
+    c = _st().cache.get(nid)
+    if c is None and _st().db is not None:                 # a member added after start-up: the members table knows the name
         try:
-            with _db.read() as conn:
+            with _st().db.read() as conn:
                 r = conn.execute("SELECT nation_name FROM members WHERE nation_id=?", (nid,)).fetchone()
         except Exception:  # noqa: BLE001
             r = None
         if r and r["nation_name"]:
-            _cache[nid] = c = {"name": r["nation_name"], "alliance_id": None, "alliance_name": None, "at": 0.0}
+            _st().cache[nid] = c = {"name": r["nation_name"], "alliance_id": None, "alliance_name": None, "at": 0.0}
     return c["name"] if c else None
 
 
 def info(nation_id) -> dict | None:
     try:
-        return _cache.get(int(nation_id))
+        return _st().cache.get(int(nation_id))
     except (TypeError, ValueError):
         return None
 
@@ -129,7 +146,7 @@ def decorate(text) -> str:
 def exact(text: str) -> dict:
     """{id: name} of every KNOWN nation (any alliance) whose name equals `text`, ignoring capitals."""
     key = (text or "").strip().lower()
-    return {nid: c["name"] for nid, c in _cache.items() if c["name"].lower() == key}
+    return {nid: c["name"] for nid, c in _st().cache.items() if c["name"].lower() == key}
 
 
 def suggest(text: str, limit: int = 8) -> list[tuple[int, str]]:
@@ -137,15 +154,15 @@ def suggest(text: str, limit: int = 8) -> list[tuple[int, str]]:
     key = (text or "").strip().lower()
     if not key:
         return []
-    hits = [(nid, c["name"]) for nid, c in _cache.items() if key in c["name"].lower() or key == str(nid)]
+    hits = [(nid, c["name"]) for nid, c in _st().cache.items() if key in c["name"].lower() or key == str(nid)]
     hits.sort(key=lambda kv: (not kv[1].lower().startswith(key), len(kv[1]), kv[1].lower()))
     out = hits[:limit]
     if len(out) < limit:
-        names = {c["name"].lower(): nid for nid, c in _cache.items()}
+        names = {c["name"].lower(): nid for nid, c in _st().cache.items()}
         for m in difflib.get_close_matches(key, list(names), n=limit, cutoff=0.72):
             nid = names[m]
             if all(nid != o[0] for o in out):
-                out.append((nid, _cache[nid]["name"]))
+                out.append((nid, _st().cache[nid]["name"]))
     return out[:limit]
 
 
@@ -159,7 +176,7 @@ async def ensure(pnw, ids, max_age: float = STALE_SECONDS) -> None:
             nid = int(x)
         except (TypeError, ValueError):
             continue
-        c = _cache.get(nid)
+        c = _st().cache.get(nid)
         if nid and (c is None or now - c["at"] > max_age):
             want.append(nid)
     if not want:
@@ -200,8 +217,8 @@ def pending_ids(conn, limit: int = 40) -> list[int]:
         " UNION SELECT member_nation_id FROM trade_alerts UNION SELECT counterparty_id FROM trade_alerts WHERE counterparty_id IS NOT NULL)"
         " SELECT id FROM seen WHERE id IS NOT NULL AND id > 0 ORDER BY id DESC LIMIT 2000").fetchall()
     now = time.time()
-    missing = [r["id"] for r in rows if r["id"] not in _cache]
-    old = [r["id"] for r in rows if r["id"] in _cache and now - _cache[r["id"]]["at"] > STALE_SECONDS]
+    missing = [r["id"] for r in rows if r["id"] not in _st().cache]
+    old = [r["id"] for r in rows if r["id"] in _st().cache and now - _st().cache[r["id"]]["at"] > STALE_SECONDS]
     return (missing + old)[:limit]
 
 

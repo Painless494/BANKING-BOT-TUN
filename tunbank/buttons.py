@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 
 import discord
+from .tenantui import TenantModal, TenantView
 
 from . import alerts as A
 
@@ -37,7 +38,7 @@ async def _safe(interaction: discord.Interaction, coro):
 
 
 # ---------------------------------------------------------------- forms
-class ModalForm(discord.ui.Modal):
+class ModalForm(TenantModal):
     def __init__(self, title: str, fields: list, callback):
         super().__init__(title=title[:45])
         self._callback = callback
@@ -60,7 +61,7 @@ async def open_form(interaction: discord.Interaction, title: str, fields: list, 
 
 
 # -------------------------------------------------------------- buttons
-class ActionView(discord.ui.View):
+class ActionView(TenantView):
     """actions: [(label, emoji, style, async callback(interaction))]"""
 
     def __init__(self, user_id: int, actions: list, refresh=None, timeout: float = 900):
@@ -93,7 +94,7 @@ class ActionView(discord.ui.View):
             await interaction.edit_original_response(embed=A.to_embed(card), view=self)
 
 
-class ItemPager(discord.ui.View):
+class ItemPager(TenantView):
     """Shows ONE record at a time. item_actions: [(label, emoji, style, async cb(interaction, item))]"""
 
     def __init__(self, user_id: int, items: list, render, item_actions: list = (), timeout: float = 900):

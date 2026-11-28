@@ -23,11 +23,21 @@ STATUS = {
     "freeze": "🧊", "info": "ℹ️", "refresh": "🔄", "key": "🔑", "time": "🕒",
 }
 
-_current: dict = dict(DEFAULT_RESOURCE_ICONS)
+from . import tenantctx
+
+_by_alliance: dict = {}          # alliance key -> {resource: icon}; each alliance keeps its own icon settings
+
+
+def _cur() -> dict:
+    key = tenantctx.current_key()
+    cur = _by_alliance.get(key)
+    if cur is None:
+        cur = _by_alliance[key] = dict(DEFAULT_RESOURCE_ICONS)
+    return cur
 
 
 def resource(res: str) -> str:
-    return _current.get(res) or DEFAULT_RESOURCE_ICONS.get(res, "▪️")
+    return _cur().get(res) or DEFAULT_RESOURCE_ICONS.get(res, "▪️")
 
 
 def status(name: str) -> str:
@@ -36,11 +46,12 @@ def status(name: str) -> str:
 
 def load(overrides: dict) -> None:
     """Replace the active icons. `overrides` is {resource: emoji}; blank values fall back to defaults."""
-    _current.clear()
-    _current.update(DEFAULT_RESOURCE_ICONS)
+    cur = _cur()
+    cur.clear()
+    cur.update(DEFAULT_RESOURCE_ICONS)
     for res, emoji in overrides.items():
         if res in DEFAULT_RESOURCE_ICONS and emoji and emoji.strip():
-            _current[res] = emoji.strip()
+            cur[res] = emoji.strip()
 
 
 def load_from_db(conn) -> None:

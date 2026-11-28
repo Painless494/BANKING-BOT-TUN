@@ -9,6 +9,7 @@ import asyncio
 import logging
 
 import discord
+from .tenantui import TenantView
 from discord import app_commands
 
 from . import alerts as A
@@ -110,7 +111,7 @@ async def run_conversion(svc: Services, interaction: discord.Interaction, nation
         await svc.alerts.econ(log_card)
 
 
-class ConverterView(discord.ui.View):
+class ConverterView(TenantView):
     """Private (ephemeral) screen: pick what to RECEIVE, then type what to convert (any number of resources)."""
 
     def __init__(self, svc: Services, user_id: int, nation_id: int, free: dict):
@@ -173,7 +174,7 @@ async def open_converter(svc: Services, interaction: discord.Interaction):
     await interaction.response.send_message(embed=A.to_embed(view.card()), view=view, ephemeral=True)
 
 
-class ConversionPanelView(discord.ui.View):
+class ConversionPanelView(TenantView):
     """The public panel: one button that never expires (re-registered when the bot starts)."""
 
     def __init__(self, svc: Services):

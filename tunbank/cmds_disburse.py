@@ -29,7 +29,7 @@ from . import pnw_rules as PR
 from . import projects as PJ
 from .config import cfg_bool, cfg_get, cfg_int, cfg_set
 from .pnw import PnWRejected, PnWUncertain
-from .ui import Services, actor_label, confirm, has_flag, nation_arg, need, reply, role_ids, thinking
+from .ui import Services, actor_label, confirm, has_flag, nation_arg, need, need_owner, platform_db, reply, role_ids, thinking
 from .valuation import value_amounts
 
 log = logging.getLogger("tunbank.disburse")
@@ -94,7 +94,7 @@ def register(grant: app_commands.Group, transfer: app_commands.Group, grantset: 
 
     async def calculate(ids, calc_fn, kind):
         """Fetch live data and calculate every recipient. A nation PnW did not return, or that is not in the alliance, is flagged."""
-        with svc.db.read() as conn:
+        with platform_db(svc).read() as conn:
             PR.load_overrides(cfg_get(conn, "pnw_rule_overrides"))                       # the admin's corrections to the built-in rules
             project_keys = PJ.project_field_keys(PJ.active(conn)) if kind == "PROJECT_GRANT" else ()
         details = await svc.pnw.fetch_nations_detail(ids, project_keys)
@@ -327,6 +327,10 @@ def register(grant: app_commands.Group, transfer: app_commands.Group, grantset: 
             return await reply(interaction, f"Days must be above 0 and at most {MAX_DAYS}.")
         with svc.db.read() as conn:
             threshold = cfg_int(conn, "daily_cash_threshold")
+            daily_cash_on = cfg_int(conn, "no_daily_cash_enabled")
+        if no_daily_cash and not daily_cash_on:
+            return await reply(interaction, "The **no_daily_cash** option is switched off: its exact rule has not been confirmed yet. "
+                                            "Run the command without it, or ask the owner to enable it with `/bankset config`.")
 
         def calc(nation):
             c = PR.compute_raws(nation, d, include_cash=not no_cash, only_missing=only_missing)
@@ -388,7 +392,7 @@ def register(grant: app_commands.Group, transfer: app_commands.Group, grantset: 
     @app_commands.choices(source=SOURCE_CHOICES)
     async def project(interaction: discord.Interaction, nations: str, project: str, source: app_commands.Choice[str], only_missing: bool = False,
                       source_member: str = "", lock_id: int = 0, note: str = ""):
-        with svc.db.read() as conn:
+        with platform_db(svc).read() as conn:
             cat = PJ.active(conn)
         entry = PJ.find(cat, project)
         if entry is None:
@@ -400,7 +404,7 @@ def register(grant: app_commands.Group, transfer: app_commands.Group, grantset: 
 
     @project.autocomplete("project")
     async def project_autocomplete(interaction: discord.Interaction, current: str):
-        with svc.db.read() as conn:
+        with platform_db(svc).read() as conn:
             cat = PJ.active(conn)
         cur = (current or "").lower()
         return [app_commands.Choice(name=e["name"][:100], value=e["key"]) for e in cat.projects.values()
@@ -502,7 +506,7 @@ def register(grant: app_commands.Group, transfer: app_commands.Group, grantset: 
         if not await need(svc, interaction, "MINISTER"):
             return
         await thinking(interaction)
-        with svc.db.read() as conn:
+        with platform_db(svc).read() as conn:
             PR.load_overrides(cfg_get(conn, "pnw_rule_overrides"))
         await interaction.followup.send(
             content="These are the rules the bot calculates with. They are **not verified** against the live game: compare previews with the game / "
@@ -514,7 +518,7 @@ def register(grant: app_commands.Group, transfer: app_commands.Group, grantset: 
         if not await need(svc, interaction, "AUDITOR"):
             return
         await thinking(interaction)
-        with svc.db.read() as conn:
+        with platform_db(svc).read() as conn:
             cat = PJ.active(conn)
         missing = [e["name"] for e in cat.projects.values() if not e.get("cost")]
         c = A.Card("📚 Project catalogue", "Used by `/grant project`. A project with no verified cost cannot be granted.", A.BLUE)
@@ -534,7 +538,7 @@ def register(grant: app_commands.Group, transfer: app_commands.Group, grantset: 
     @grantset.command(name="projectimport", description="Admin: import the project costs/requirements from a CSV or JSON file")
     @app_commands.describe(file="project-catalogue.csv (or .json). Rows are matched by `key`; projects not in the file are left as they are")
     async def projectimport(interaction: discord.Interaction, file: discord.Attachment):
-        if not await need(svc, interaction, "ADMIN"):
+        if not await need_owner(svc, interaction):
             return
         await thinking(interaction)
         if file.size > PJ.MAX_IMPORT_BYTES:
@@ -542,7 +546,7 @@ def register(grant: app_commands.Group, transfer: app_commands.Group, grantset: 
         text = (await file.read()).decode("utf-8-sig", errors="replace")
         try:
             def look():
-                with svc.db.read() as conn:
+                with platform_db(svc).read() as conn:
                     return PJ.prepare(PJ.active(conn), text, file.filename)
             doc, changed = await asyncio.to_thread(look)
         except L.LedgerError as exc:
@@ -557,7 +561,7 @@ def register(grant: app_commands.Group, transfer: app_commands.Group, grantset: 
             return await interaction.followup.send("Cancelled. Nothing was imported.", ephemeral=True)
 
         def do():
-            with svc.db.tx() as conn:
+            with platform_db(svc).tx() as conn:
                 return PJ.import_catalogue(conn, text=text, filename=file.filename, actor=uid(interaction))
         try:
             res = await asyncio.to_thread(do)
@@ -569,11 +573,11 @@ def register(grant: app_commands.Group, transfer: app_commands.Group, grantset: 
     @grantset.command(name="rule", description="Admin: correct one number of the built-in game rules (or reset it)")
     @app_commands.describe(key="Which rule (start typing)", value="The new number, or `reset` to go back to the built-in value")
     async def rule_cmd(interaction: discord.Interaction, key: str, value: str):
-        if not await need(svc, interaction, "ADMIN"):
+        if not await need_owner(svc, interaction):
             return
         if key not in PR.DEFAULT_RULES:
             return await reply(interaction, "I don't know that rule. Start typing and pick one from the list (`/grantset rules` lists them all).")
-        with svc.db.read() as conn:
+        with platform_db(svc).read() as conn:
             current = json.loads(cfg_get(conn, "pnw_rule_overrides") or "{}")
         before = current.get(key, str(PR.DEFAULT_RULES[key]))
         if value.strip().lower() == "reset":
@@ -588,7 +592,7 @@ def register(grant: app_commands.Group, transfer: app_commands.Group, grantset: 
             current[key] = format(new.normalize(), "f")
 
         def do():
-            with svc.db.tx() as conn:
+            with platform_db(svc).tx() as conn:
                 cfg_set(conn, "pnw_rule_overrides", json.dumps(current, sort_keys=True), uid(interaction))
                 L.audit(conn, uid(interaction), "RULE_CHANGED", key, {"before": str(before), "after": current.get(key, "built-in")})
         await asyncio.to_thread(do)

@@ -8,6 +8,7 @@ import logging
 from dataclasses import dataclass, field
 
 import discord
+from .tenantui import TenantView
 
 from . import alerts as A
 from . import ledger as L
@@ -113,6 +114,25 @@ def levels(svc: Services, interaction: discord.Interaction) -> set:
         return perms.levels_for(conn, interaction.user.id, role_ids(interaction), svc.settings.owner_ids)
 
 
+def platform_db(svc):
+    """Where the game rules and the project catalogue live: the platform database when several alliances share the bot,
+    else (a plain single-alliance setup, and the tests) the alliance's own database."""
+    platform = getattr(svc, "platform", None)
+    return platform.db if platform is not None else svc.db
+
+
+async def need_owner(svc, interaction) -> bool:
+    """Game rules and the project catalogue are shared by every alliance, so with several alliances only the platform owner may change
+    them. Without a platform (single alliance) the old rule stays: an Admin may."""
+    platform = getattr(svc, "platform", None)
+    if platform is None:
+        return await need(svc, interaction, "ADMIN")
+    if platform.is_owner(interaction.user.id):
+        return True
+    await reply(interaction, "Only the platform owner can change this: the game rules and the project catalogue are shared by every alliance.")
+    return False
+
+
 def icons_lock() -> str:
     from . import icons
     return icons.status("lock")
@@ -172,7 +192,7 @@ def xlsx_file(data: bytes, name: str) -> discord.File:
     return discord.File(io.BytesIO(data), filename=name)
 
 
-class ConfirmView(discord.ui.View):
+class ConfirmView(TenantView):
     """Confirm / Cancel. Only the person who started it can press; works once."""
 
     def __init__(self, user_id: int, timeout: float):
@@ -282,7 +302,7 @@ async def nation_arg(svc: Services, interaction: discord.Interaction, text: str)
 
 
 # ---------------------------------------------------------------- pagination
-class PagedView(discord.ui.View):
+class PagedView(TenantView):
     """Previous / Next buttons for long lists. Only the person who asked can use them."""
 
     def __init__(self, user_id: int, pages: list, timeout: float = 600):
@@ -336,7 +356,7 @@ def chunk_cards(title: str, lines: list, *, per_page: int = 8, color: int = A.BL
     return pages
 
 
-class RefreshView(discord.ui.View):
+class RefreshView(TenantView):
     """A 🔄 Refresh button that rebuilds the same card with fresh data."""
 
     def __init__(self, user_id: int, builder, timeout: float = 600):
