@@ -165,8 +165,9 @@ def _tx_category(conn, tx_id: int, reason: str | None) -> str:
     row = conn.execute("SELECT b.kind FROM disbursement_items i JOIN disbursement_batches b ON b.id=i.batch_id WHERE i.tx_id=?", (tx_id,)).fetchone()
     if row:
         return LABEL.get(row["kind"], row["kind"].replace("_", " ").title())
-    if conn.execute("SELECT 1 FROM bulk_items WHERE tx_id=?", (tx_id,)).fetchone():
-        return "Bulk payments"
+    row = conn.execute("SELECT b.source_filename FROM bulk_items i JOIN bulk_batches b ON b.id=i.batch_id WHERE i.tx_id=?", (tx_id,)).fetchone()
+    if row:
+        return "Game prizes" if row["source_filename"] == "game-prizes" else "Bulk payments"
     if conn.execute("SELECT 1 FROM grants WHERE tx_id=?", (tx_id,)).fetchone():
         return "Grants"
     low = (reason or "").lower()

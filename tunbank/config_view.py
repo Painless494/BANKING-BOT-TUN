@@ -36,7 +36,8 @@ G_TRADE = "Trade monitor"
 G_SYS = "Backups & scanning"
 G_ICONS = "Resource icons"
 G_GRANTS = "Grants & transfers"
-GROUPS = [G_ALERTS, G_MEMBERS, G_SAFETY, G_EXT, G_OFF, G_LOANS, G_GRANTS, G_PRICE, G_TRADE, G_SYS, G_ICONS]
+G_GAMES = "Games"
+GROUPS = [G_ALERTS, G_MEMBERS, G_SAFETY, G_EXT, G_OFF, G_LOANS, G_GRANTS, G_GAMES, G_PRICE, G_TRADE, G_SYS, G_ICONS]
 
 LEVELS = {"BANKER": "Banker and above", "MINISTER": "Minister and above", "ADMIN": "Admins only"}
 
@@ -104,6 +105,23 @@ SETTINGS: dict = {
     "econ_report_weekly": S(G_ALERTS, "Weekly economy report", "toggle", "Post the economy report automatically every Monday"),
     "econ_report_monthly": S(G_ALERTS, "Monthly economy report", "toggle", "Post the economy report automatically on the 1st of each month"),
     "econ_report_channel_id": S(G_ALERTS, "Economy report channel", "channel", "Where the automatic reports are posted (blank = the ECON log)"),
+    "games_enabled": S(G_GAMES, "Games open", "toggle", "Master switch for every game. Check the prize table (/gameset show) before switching on"),
+    "games_day_start_hour_utc": S(G_GAMES, "Daily reset hour (UTC)", "count", "0 = midnight UTC, the same day as PnW", zero="Midnight UTC"),
+    "games_public_results": S(G_GAMES, "Results posted in the channel", "choice", "Who gets a public announcement of a result",
+                              choices={"all": "Every result", "wins": "Prizes only", "jackpots": "Jackpots only", "none": "Nothing (private only)"}),
+    "games_announce_channel_id": S(G_GAMES, "Results channel", "channel", "Blank = the channel where the player played"),
+    "games_play_role_id": S(G_GAMES, "Role that may play", "text", "A Discord role ID. Blank = every member with a linked nation"),
+    "games_season_start": S(G_GAMES, "Leaderboard season start", "hidden", "Set with /gameset newseason"),
+    "games_leaderboard_size": S(G_GAMES, "Leaderboard size", "count", "How many players the leaderboard shows"),
+    "spin_enabled": S(G_GAMES, "Spin of Fortune open", "toggle", "Also needs the master switch"),
+    "spin_per_day": S(G_GAMES, "Spins per member per day", "count", "1 = a daily spin"),
+    "spin_animation": S(G_GAMES, "Spin animation", "toggle", "A short spinning animation before the result"),
+    "spin_daily_prize_cap": S(G_GAMES, "Spin daily prize cap", "usd", "Most prize value the spin hands out per day. When reached, only no-prize results can come up",
+                              zero="No cap"),
+    "spin_panel_title": S(G_GAMES, "Spin panel title", "text", "Shown at the top of the spin panel"),
+    "spin_panel_text": S(G_GAMES, "Spin panel text", "text", "Shown on the spin panel"),
+    "spin_panel_channel_id": S(G_GAMES, "Spin panel channel", "hidden", "Set by /gameset panel"),
+    "spin_panel_message_id": S(G_GAMES, "Spin panel message", "hidden", "Set by /gameset panel"),
     "no_daily_cash_enabled": S(G_GRANTS, "Allow the no_daily_cash option", "toggle", "Off until the owner confirms the exact rule; /transfer raws refuses the option while off"),
     "pnw_rule_overrides": S(G_GRANTS, "Game-rule corrections", "hidden", "Change with /grantset rule"),
     "disburse_live_kinds": S(G_GRANTS, "Disbursements allowed to send", "words", "Empty = previews only. Change with /grantset live"),

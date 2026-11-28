@@ -9,7 +9,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from . import cmds_admin, cmds_audit, cmds_backup, cmds_bulk, cmds_chart, cmds_convert, cmds_deposit, cmds_disburse, cmds_grant, cmds_loan, cmds_panel, cmds_report, cmds_shared_offshore, cmds_trade, cmds_offshore, cmds_econ, cmds_help, cmds_market, cmds_member
+from . import cmds_admin, cmds_audit, cmds_backup, cmds_bulk, cmds_chart, cmds_convert, cmds_deposit, cmds_disburse, cmds_games, cmds_grant, cmds_loan, cmds_panel, cmds_report, cmds_shared_offshore, cmds_trade, cmds_offshore, cmds_econ, cmds_help, cmds_market, cmds_member
 from . import ledger as L
 from .alerts import AlertService
 from .credentials import Crypto
@@ -115,6 +115,8 @@ class TunBankBot(commands.Bot):
         transfer = app_commands.Group(name="transfer", description="Resource transfers calculated from each nation's data (ECON)")
         grantset = app_commands.Group(name="grantset", description="Grant and transfer settings (ECON)")
         economy = app_commands.Group(name="economy", description="Alliance revenue and expenditure reports (ECON)")
+        games = app_commands.Group(name="games", description="Games: Spin of Fortune and more to come")
+        gameset = app_commands.Group(name="gameset", description="Game prizes, payouts and settings (staff)")
         cmds_member.register(bank, nation, svc)
         cmds_econ.register(bank, svc)                 # must come first: defines svc.do_reconcile
         cmds_admin.register(bank, bankset, ledger, svc)
@@ -135,11 +137,13 @@ class TunBankBot(commands.Bot):
         cmds_trade.register(trade, svc)
         cmds_shared_offshore.register(offshore_grp, svc)
         cmds_report.register(economy, svc)
+        cmds_games.register(games, gameset, svc)
         self.add_view(svc.panel_view())                                # the banking panel keeps working after restarts
+        self.add_view(svc.game_panel_view())                           # the spin panel keeps working after restarts
         self.add_view(cmds_convert.ConversionPanelView(svc))          # the panel button keeps working after restarts
         self.tree.on_error = self.on_tree_error
 
-        for g in (bank, bankset, nation, tax, audit, ledger, chart, bulk, grant, deposit, loan, trade, offshore_grp, transfer, grantset, economy):
+        for g in (bank, bankset, nation, tax, audit, ledger, chart, bulk, grant, deposit, loan, trade, offshore_grp, transfer, grantset, economy, games, gameset):
             self.tree.add_command(g)
 
         if self.tenants is None:

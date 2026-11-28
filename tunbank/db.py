@@ -114,7 +114,7 @@ class Database:
             }
             files = sorted(MIGRATIONS_DIR.glob("[0-9][0-9][0-9]_*.sql"))
             if self.extra_migrations_dir is not None:
-                files = sorted(files + list(self.extra_migrations_dir.glob("[0-9][0-9][0-9]_*.sql")))
+                files = sorted(files + list(self.extra_migrations_dir.glob("[0-9][0-9][0-9]_*.sql")), key=lambda f: f.name)
                 versions = [int(f.name[:3]) for f in files]
                 if len(versions) != len(set(versions)):
                     raise DatabaseError("The shared and platform-only migration files use the same version number twice.")

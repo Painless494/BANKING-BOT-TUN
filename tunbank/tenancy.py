@@ -339,7 +339,7 @@ class Tenants:
 class ServicesProxy:
     """Stands in for `svc` in the command modules. See the module docstring."""
 
-    _SHARED = ("actions", "do_reconcile", "panel_view", "platform")
+    _SHARED = ("actions", "do_reconcile", "panel_view", "game_panel_view", "platform")
 
     def __init__(self, tenants_getter):
         object.__setattr__(self, "_tenants_getter", tenants_getter)

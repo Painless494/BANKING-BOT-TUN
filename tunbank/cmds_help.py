@@ -32,6 +32,7 @@ CATEGORIES = {
     "tax": ("Tax", "🧾", "Tax collected from members. Alliance-owned; members never see this."),
     "audit": ("Audit & security", "🔎", "Checks, approvals and the emergency lock."),
     "charts": ("Charts", "📊", "Pictures drawn from the bank's real data."),
+    "games": ("Games", "🎰", "Daily games with real prizes. Prizes are only ever paid by the bank, through the normal safe payment checks."),
     "config": ("Configuration", "⚙️", "Roles, confidential-access permissions, limits, icons, channels, imports and backups."),
 }
 
@@ -74,6 +75,10 @@ CATALOG = {
     "loan add": ("loans", "MINISTER"), "loan deduct": ("loans", "MINISTER"), "loan applypayment": ("loans", "BANKER"),
     "loan adopt": ("loans", "ADMIN"), "loan writeoff": ("loans", "ADMIN"),
     # tax
+    "games spin": ("games", "ALL"), "games prizes": ("games", "ALL"), "games stats": ("games", "ALL"), "games leaderboard": ("games", "ALL"), "games history": ("games", "ALL"),
+    "gameset show": ("games", "BANKER"), "gameset payouts": ("games", "BANKER"), "gameset pay": ("games", "BANKER"), "gameset configure": ("games", "MINISTER"),
+    "gameset prize": ("games", "MINISTER"), "gameset removeprize": ("games", "MINISTER"), "gameset defaults": ("games", "MINISTER"), "gameset panel": ("games", "MINISTER"),
+    "gameset newseason": ("games", "MINISTER"), "gameset cancel": ("games", "MINISTER"),
     "economy report": ("tax", "FLAG:bank_view_alliance_holdings"), "economy auto": ("tax", "FLAG:bank_view_alliance_holdings"),
     "tax turns": ("tax", "FLAG:bank_view_tax"), "tax dashboard": ("tax", "FLAG:bank_view_tax"), "tax report": ("tax", "FLAG:bank_view_tax"), "tax profile": ("tax", "FLAG:bank_view_tax"), "tax brackets": ("tax", "FLAG:bank_view_tax"),
     "tax exemptions": ("tax", "FLAG:bank_view_tax"), "tax export": ("tax", "FLAG:bank_view_tax"),
