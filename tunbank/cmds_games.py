@@ -46,7 +46,7 @@ def register(games: app_commands.Group, gameset: app_commands.Group, svc: Servic
             return {
                 "on": cfg_int(conn, "games_enabled") == 1 and cfg_int(conn, "spin_enabled") == 1, "per_day": max(cfg_int(conn, "spin_per_day"), 0),
                 "hour": min(max(cfg_int(conn, "games_day_start_hour_utc"), 0), 23), "cap": cfg_int(conn, "spin_daily_prize_cap") * 100,
-                "anim": cfg_int(conn, "spin_animation") == 1, "stay": cfg_int(conn, "spin_panel_stay_last") == 1, "role": cfg_get(conn, "games_play_role_id").strip(),
+                "anim": cfg_int(conn, "spin_animation") == 1, "odds": cfg_int(conn, "games_show_odds") == 1, "stay": cfg_int(conn, "spin_panel_stay_last") == 1, "role": cfg_get(conn, "games_play_role_id").strip(),
                 "public": cfg_get(conn, "games_public_results") or "all", "announce": cfg_get(conn, "games_announce_channel_id").strip(),
                 "season": cfg_get(conn, "games_season_start"), "board": max(cfg_int(conn, "games_leaderboard_size"), 1),
             }
@@ -103,7 +103,7 @@ def register(games: app_commands.Group, gameset: app_commands.Group, svc: Servic
                 await reply(interaction, card=card)
         except (discord.HTTPException, AttributeError):
             await reply(interaction, card=card)
-        await keep_panel_last(interaction, await announce(interaction, res, member, st))
+        await announce(interaction, res, member, st)
 
     def result_card(res: G.PlayResult, member, stats: dict, st: dict) -> A.Card:
         o = res.outcome
@@ -120,7 +120,8 @@ def register(games: app_commands.Group, gameset: app_commands.Group, svc: Servic
         c.add("Spins left today", str(res.spins_left), True)
         if res.spins_left == 0:
             c.add("Next spin", f"in {G.until(utcnow(), G.next_reset(utcnow(), st['hour']))}", True)
-        c.footer = f"Chance of this result: {res.chance_pct:.1f}%"
+        if st["odds"]:
+            c.footer = f"Chance of this result: {res.chance_pct:.1f}%"
         return c
 
     async def announce(interaction, res: G.PlayResult, member, st: dict):
@@ -149,10 +150,13 @@ def register(games: app_commands.Group, gameset: app_commands.Group, svc: Servic
         return target
 
     # ---- keeping the panel at the bottom of its channel
-    keep_state: dict = {}
+    PANEL_DELAY = 3.0                       # wait for a burst of messages to settle before moving it
+    watch: dict = {}                        # per alliance: what channel the panel is in (cached, so ordinary messages cost nothing)
+    movers: dict = {}                       # per alliance: the background mover
 
     async def put_panel(client, target, actor: str):
         """Post a fresh panel in `target`, then remove the previous one and remember the new one. None if it could not be posted."""
+        from . import tenantctx
         with svc.db.read() as conn:
             saved, old_msg = cfg_get(conn, "spin_panel_channel_id"), cfg_get(conn, "spin_panel_message_id")
         old = None
@@ -177,42 +181,70 @@ def register(games: app_commands.Group, gameset: app_commands.Group, svc: Servic
                 cfg_set(conn, "spin_panel_channel_id", str(target.id), actor)
                 cfg_set(conn, "spin_panel_message_id", str(msg.id), actor)
         await asyncio.to_thread(keep)
+        watch.pop(tenantctx.current_key(), None)                           # re-read the panel's channel on the next message
         return msg
 
-    async def keep_panel_last(interaction, posted_in):
-        """A result was just posted in `posted_in`. If that is the panel's own channel, move the panel back to the bottom.
-
-        Several results at once are handled in order and share one move: a result posted before the move started is already covered by it."""
-        if posted_in is None:
-            return
-        with svc.db.read() as conn:
-            stay = cfg_int(conn, "spin_panel_stay_last") == 1
-            panel_channel = cfg_get(conn, "spin_panel_channel_id").strip()
-        if not stay or not panel_channel.isdigit() or str(getattr(posted_in, "id", "")) != panel_channel:
-            return
+    def watched() -> dict:
+        """The panel's channel and settings for the current alliance, re-read at most once a minute."""
+        import time
         from . import tenantctx
-        st = keep_state.setdefault(tenantctx.current_key(), {"lock": asyncio.Lock(), "want": 0, "done": 0})
-        st["want"] += 1
-        mine = st["want"]
-        async with st["lock"]:
-            if st["done"] >= mine:
-                return                                                    # a move that started after my result already covered it
-            covered = st["want"]
-            try:
-                await put_panel(getattr(interaction, "client", None), posted_in, "system:panel")
-            except Exception:  # noqa: BLE001 - a panel that fails to move must never affect the spin that was already recorded
-                log.exception("could not move the spin panel to the bottom")
-            st["done"] = covered
+        key = tenantctx.current_key()
+        w = watch.get(key)
+        if w is None or time.monotonic() - w["at"] > 60:
+            with svc.db.read() as conn:
+                chan = cfg_get(conn, "spin_panel_channel_id").strip()
+                w = {"at": time.monotonic(), "channel": int(chan) if chan.isdigit() else None,
+                     "stay": cfg_int(conn, "spin_panel_stay_last") == 1, "gap": max(cfg_int(conn, "spin_panel_min_seconds"), 3)}
+            watch[key] = w
+        return w
+
+    async def touch(message, client=None):
+        """Call for EVERY message posted in a server this alliance uses (the bot's on_message does). If it landed in the panel's channel
+        the panel is moved back to the bottom: after a short pause so a burst of messages causes one move, and never more often than
+        `spin_panel_min_seconds`. The panel's own message never triggers a move. Returns the background task (tests wait on it)."""
+        from . import tenantctx
+        w = watched()
+        channel = getattr(message, "channel", None)
+        if not w["stay"] or w["channel"] is None or getattr(channel, "id", None) != w["channel"]:
+            return None
+        me = getattr(client, "user", None)
+        if getattr(getattr(message, "author", None), "id", None) == getattr(me, "id", object()) and getattr(message, "components", None):
+            return None                                                   # the panel itself (a bot message carrying buttons)
+        key = tenantctx.current_key()
+        mv = movers.setdefault(key, {"dirty": False, "task": None, "lock": asyncio.Lock()})
+        mv["dirty"] = True
+
+        async def worker():
+            while mv["dirty"]:
+                await asyncio.sleep(PANEL_DELAY)
+                mv["dirty"] = False
+                async with mv["lock"]:
+                    try:
+                        await put_panel(client, channel, "system:panel")
+                    except Exception:  # noqa: BLE001 - a panel that fails to move must never matter to anyone else
+                        log.exception("could not move the spin panel to the bottom")
+                await asyncio.sleep(w["gap"])
+        if mv["task"] is None or mv["task"].done():
+            mv["task"] = asyncio.create_task(worker())
+        return mv["task"]
+
+    svc.game_panel_touch = touch
 
     # ------------------------------------------------------------------------------------------------ player views
     def prizes_card() -> A.Card:
         with svc.db.read() as conn:
             table = G.odds(G.load_outcomes(conn, GAME))
-        c = A.Card(f"{DEF.emoji} {DEF.name}: prizes and odds", "What the wheel can give and how often. These are the real odds the bot uses.", A.BLUE)
-        if not table:
+            show_odds = cfg_int(conn, "games_show_odds") == 1
+        c = A.Card(f"{DEF.emoji} {DEF.name}: prizes", "What you can win.", A.BLUE)
+        wins = [(o, pct) for o, pct in table if o.pays]
+        if not wins:
             c.description = "No prizes are set up yet."
             return c
-        lines = [f"{'💰' if o.jackpot else '•'} **{o.label}** — {pct:.1f}%" + ("" if o.pays else " (no prize)") for o, pct in table]
+        if show_odds:
+            c.description = "What the wheel can give and how often. These are the real odds the bot uses."
+            lines = [f"{'💰' if o.jackpot else '•'} **{o.label}** — {pct:.1f}%" for o, pct in table]
+        else:
+            lines = [f"{'💰' if o.jackpot else '•'} **{o.label}**" for o, _ in wins]
         c.add("Prizes", "\n".join(lines)[:1000])
         return c
 
@@ -364,7 +396,7 @@ def register(games: app_commands.Group, gameset: app_commands.Group, svc: Servic
                 c.add("Cost to the alliance", "Can't be worked out yet: some prize has no price (or live prices are down).")
         else:
             c.add("Prize table", "**Empty.** Use `/gameset defaults` to load the classic prizes, or `/gameset prize` to add your own.")
-        c.add("Panel stays last", "✅ yes: re-posted below each result in its own channel" if st["stay"] else "⬜ no", True)
+        c.add("Panel stays last", "✅ yes: moved below any new message in its channel" if st["stay"] else "⬜ no", True)
         c.add("Prize budget", f"{fmt.dollars(st['cap'])} per day" if st["cap"] else "No daily cap (set one with `/gameset configure`)", True)
         if waiting:
             c.add("Waiting to be paid", f"**{len(waiting)}** prize(s) worth {fmt.amounts_with_value(_sum(waiting), None)}. Pay them with `/gameset pay`.")
@@ -380,7 +412,7 @@ def register(games: app_commands.Group, gameset: app_commands.Group, svc: Servic
     @app_commands.describe(open_games="Open or close all games", spins_per_day="Spins per member per day", reset_hour="UTC hour the day resets (0-23)",
                            role="Only this role may play (use clear_role to allow everyone)", clear_role="Allow every linked member again",
                            results="Who sees results in the channel", results_channel="Channel for public results",
-                           animation="Spinning animation", panel_stays_last="Keep the panel as the last message when results are posted in its channel", prize_budget_usd="Most prize value per day in dollars (0 = no cap)")
+                           animation="Spinning animation", panel_stays_last="Keep the panel as the last message of its channel", prize_budget_usd="Most prize value per day in dollars (0 = no cap)")
     @app_commands.choices(results=PUBLIC)
     async def configure(interaction: discord.Interaction, open_games: Optional[bool] = None, spins_per_day: Optional[app_commands.Range[int, 0, 20]] = None,
                         reset_hour: Optional[app_commands.Range[int, 0, 23]] = None, role: Optional[discord.Role] = None, clear_role: bool = False,
@@ -506,6 +538,7 @@ def register(games: app_commands.Group, gameset: app_commands.Group, svc: Servic
     async def newseason(interaction: discord.Interaction):
         if not await need(svc, interaction, "MINISTER"):
             return
+        await thinking(interaction)                          # the confirmation screen is sent as a follow-up, which needs the interaction acknowledged first
         card = A.Card("🏁 Start a new season?", "The leaderboard starts again from zero. **Nothing is deleted**: every spin and prize stays on record "
                       "and `/games leaderboard period:All time` still shows everything.", A.ORANGE)
         if not await confirm(svc, interaction, card):

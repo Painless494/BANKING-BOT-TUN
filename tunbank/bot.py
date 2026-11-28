@@ -175,6 +175,27 @@ class TunBankBot(commands.Bot):
         self.tree.interaction_check = self.alliance_gate
         await self.sync_alliance_servers()
 
+    async def on_message(self, message):
+        """Every message posted in an alliance's server: lets the spin panel stay at the bottom of its channel. (Needs no message content.)"""
+        parent = getattr(super(), "on_message", None)
+        if parent is not None:
+            await parent(message)
+        guild = getattr(message, "guild", None)
+        if guild is None:
+            return
+        try:
+            if self.tenants is None:
+                if self.settings.guild_id and guild.id != self.settings.guild_id:
+                    return
+                await self.reg.game_panel_touch(message, self)
+                return
+            t = self.tenants.for_guild(guild.id)
+            if t is not None and t.ready:
+                with t.activate():
+                    await self.reg.game_panel_touch(message, self)
+        except Exception:  # noqa: BLE001 - never let this affect the bot
+            log.exception("panel follow-up failed")
+
     async def sync_alliance_servers(self, only_guild_id=None):
         """Register the commands in every alliance's server (the platform group only in the home server)."""
         for t in self.tenants.all():
