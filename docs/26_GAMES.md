@@ -4,7 +4,7 @@
 * `/games spin` or the **🎰 SPIN** button on the panel: one spin per day (staff can change that). The result is shown privately, and
   announced in the channel as staff choose. Prizes are **not** paid instantly: they wait until staff run the payout (`/games history` shows
   "waiting / paid").
-* `/games prizes` shows every prize with its real odds. `/games stats`, `/games leaderboard` (this season or all time), `/games history`.
+* `/games prizes` shows the prizes. **The odds are not shown to members** (staff see them in `/gameset show`; switch `games_show_odds` on to show them). `/games stats`, `/games leaderboard` (this season or all time), `/games history`.
 * You need a linked nation (`/nation link`): prizes are paid to it.
 
 ## For staff (all settings are also in `/bankset config` → Games)
@@ -14,9 +14,10 @@
 3. `/gameset configure open_games:True` (refuses while the prize table is empty). Also: spins per day, reset hour (UTC), a required role,
    who sees results and where, the animation, and a **daily prize budget in dollars** (once reached, only no-prize results can come up).
 4. `/gameset panel` posts the panel with buttons (SPIN / My stats / Leaderboard / Prizes). It keeps working after restarts.
-   If results are posted in the **same channel** as the panel, the panel is re-posted below each result so it is always the last message
-   (the old copy is removed; several results at once share one move). Switch off with `/gameset configure panel_stays_last:False`.
-   It only follows the bot's own results: other people's chat messages can still push it up.
+   The panel **stays the last message of its channel**: any new message there (results, chat, other bots) makes the bot post a fresh panel
+   below it and remove the old one. It waits 3 seconds so a burst of messages causes one move, and moves at most once every
+   `spin_panel_min_seconds` (default 8) so a busy channel is not hammered. Switch off with `/gameset configure panel_stays_last:False`.
+   The panel's own post never triggers a move. This needs no extra Discord permission (the bot only learns that a message was posted, not what it says).
 5. `/gameset payouts` lists prizes waiting. `/gameset pay` pays them (see below). `/gameset cancel` cancels an unpaid prize (reason kept).
 6. `/gameset newseason` restarts the leaderboard. Nothing is deleted.
 
@@ -31,7 +32,7 @@ again, one that is paid or in flight cannot. Prizes of frozen accounts are held 
 | Original | Here |
 |---|---|
 | Prizes were text, paid by hand, then "claimed" by deleting history | Prizes are real records paid through the bank's safe payment pipeline; history is never deleted |
-| Prize list, odds, scores, role, channel, text all hard-coded | All configurable; odds are shown to players |
+| Prize list, odds, scores, role, channel, text all hard-coded | All configurable; odds are for staff only unless you switch them on |
 | "Jackpot" meant weight ≤ 1 | An explicit jackpot flag |
 | Score guessed from the prize text | A score stored on each prize |
 | `250k` was ambiguous | Read as **$250,000** (change it with `/gameset prize` if you meant otherwise) |
