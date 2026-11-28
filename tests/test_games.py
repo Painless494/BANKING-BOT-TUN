@@ -270,7 +270,9 @@ class Games(unittest.TestCase):
             self.slept.append(s)
         self._sleep = asyncio.sleep
         cmds_sleep = cmds_games.asyncio
-        cmds_games.asyncio = types.SimpleNamespace(sleep=nosleep, to_thread=asyncio.to_thread)
+        fast = types.SimpleNamespace(**{k: getattr(asyncio, k) for k in dir(asyncio) if not k.startswith("__")})
+        fast.sleep = nosleep                                   # everything of asyncio works; only the animation pauses are skipped
+        cmds_games.asyncio = fast
         self._asyncio = cmds_sleep
         self.svc.prices = types.SimpleNamespace(get=self._snap)
 
@@ -295,6 +297,7 @@ class Games(unittest.TestCase):
         i = FI(user)
         i.command = types.SimpleNamespace(qualified_name="games spin")
         i.channel = self.chan
+        i.client = getattr(self, "client", None)
         if via == "button":
             self.run_async(self.svc.game_panel_view().play(i, None))
         else:
@@ -584,6 +587,115 @@ class Games(unittest.TestCase):
         with self.db.read() as c:
             rep = ER.compute(c, p, False, [])
         self.assertIn("Game prizes", rep.expenditure)
+
+    # ---- the panel stays the last message
+    def room(self, spin_in_same_channel=True):
+        """A channel that remembers its messages in order, and a client that can find it."""
+        outer = self
+        msgs = []
+
+        class Msg:
+            def __init__(self, embed, view):
+                self.id, self.embed, self.view, self.deleted = 7000 + len(msgs), embed, view, False
+                msgs.append(self)
+
+            async def delete(self):
+                self.deleted = True
+
+        class Room:
+            id = 5150
+            mention = "#spin"
+
+            async def send(self, embed=None, view=None, **kw):
+                if outer.fail_sends and view is not None:
+                    raise discord.HTTPException()
+                return Msg(embed, view)
+
+            async def fetch_message(self, mid):
+                for m in msgs:
+                    if m.id == mid and not m.deleted:
+                        return m
+                raise discord.HTTPException()
+        room = Room()
+        self.client = types.SimpleNamespace(get_channel=lambda cid: room if cid == 5150 else None, fetch_channel=None)
+        self.chan = room
+        self.fail_sends = False
+        return room, msgs
+
+    def alive(self, msgs):
+        return [("panel" if m.view is not None else "result") for m in msgs if not m.deleted]
+
+    def post_panel(self, room):
+        i = FI(self.admin)
+        i.channel, i.client = room, self.client
+        self.run_async(self.gameset.commands["panel"].callback(i, room))
+
+    def test_panel_moves_back_below_a_result_posted_in_its_own_channel(self):
+        self.open()
+        room, msgs = self.room()
+        self.post_panel(room)
+        self.assertEqual(self.alive(msgs), ["panel"])
+        self.spin()
+        self.assertEqual(self.alive(msgs), ["result", "panel"])               # the panel is the last message again, and there is only one
+        with self.db.read() as c:
+            self.assertEqual(cfg_get(c, "spin_panel_message_id"), str(msgs[-1].id))
+        self.spin(self.bob)
+        self.assertEqual(self.alive(msgs), ["result", "result", "panel"])
+
+    def test_a_result_in_another_channel_leaves_the_panel_alone(self):
+        self.open()
+        room, msgs = self.room()
+        self.post_panel(room)
+        other = TC.FakeChannel()
+        self.cfg(games_announce_channel_id=999)
+        self.client.get_channel = lambda cid: room if cid == 5150 else other if cid == 999 else None
+        self.spin()
+        self.assertEqual(self.alive(msgs), ["panel"])
+        self.assertEqual(len(other.sent), 1)
+
+    def test_the_setting_can_switch_it_off_and_quiet_results_do_not_move_it(self):
+        self.open()
+        room, msgs = self.room()
+        self.post_panel(room)
+        self.cfg(spin_panel_stay_last=0)
+        self.spin()
+        self.assertEqual(self.alive(msgs), ["panel", "result"])
+        self.cfg(spin_panel_stay_last=1, games_public_results="none", spin_per_day=5)
+        self.spin(self.bob)
+        self.assertEqual(self.alive(msgs), ["panel", "result"])               # nothing was posted, so nothing moved
+
+    def test_many_results_at_once_leave_exactly_one_panel_at_the_bottom(self):
+        self.open()
+        with self.db.tx() as c:
+            for n in range(3, 9):
+                c.execute("INSERT INTO members(nation_id,nation_name,discord_id,created_at) VALUES(?,?,?,?)", (n, f"N{n}", str(1000 + n), "x"))
+        room, msgs = self.room()
+        self.post_panel(room)
+
+        async def burst():
+            ins = []
+            for uid_ in [111, 112] + [1000 + n for n in range(3, 9)]:
+                i = FI(discord.User(uid_, "u"))
+                i.channel, i.client = room, self.client
+                ins.append(i)
+            await asyncio.gather(*(self.games.commands["spin"].callback(i) for i in ins))
+        self.run_async(burst())
+        alive = self.alive(msgs)
+        self.assertEqual(alive.count("result"), 8)
+        self.assertEqual(alive.count("panel"), 1)
+        self.assertEqual(alive[-1], "panel")
+        self.assertLess(sum(m.view is not None for m in msgs), 9)               # fewer panel posts than results: they share moves
+
+    def test_a_panel_that_cannot_be_moved_never_breaks_the_spin(self):
+        self.open()
+        room, msgs = self.room()
+        self.post_panel(room)
+        self.fail_sends = True
+        out = self.spin().text()
+        self.assertIn("300 steel", out)
+        with self.db.read() as c:
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM game_prizes").fetchone()[0], 1)
+        self.assertEqual(self.alive(msgs), ["panel", "result"])               # the old panel is kept when a new one can't be posted
 
     # ---- structure
     def test_panel_buttons_have_unique_stable_ids(self):

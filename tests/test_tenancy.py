@@ -584,8 +584,8 @@ class TestMigration018(unittest.TestCase):
             d = Path(t)
             pdb = Database(d / "platform.db", extra_migrations_dir=tenancy.PLATFORM_MIGRATIONS_DIR)
             applied = pdb.migrate()
-            self.assertEqual(applied[-2:], ["018_tenants.sql", "019_games.sql"])
-            self.assertEqual(len(applied), 19)
+            self.assertEqual(applied[-3:], ["018_tenants.sql", "019_games.sql", "020_member_dm_prefs.sql"])
+            self.assertEqual(len(applied), 20)
             self.assertEqual(pdb.migrate(), [])
             home = Database(d / "tunbank.db")
             applied_home = home.migrate()
@@ -612,8 +612,8 @@ class TestMigration018(unittest.TestCase):
             plat = Database(d / "p.db", extra_migrations_dir=tenancy.PLATFORM_MIGRATIONS_DIR)
             applied = plat.migrate(backup_dir=d / "bk")
             self.assertEqual(applied[0], "007_negative_balances_reset_restore_loans.sql")
-            self.assertEqual(applied[-2:], ["018_tenants.sql", "019_games.sql"])
-            self.assertEqual(len(applied), 13)
+            self.assertEqual(applied[-3:], ["018_tenants.sql", "019_games.sql", "020_member_dm_prefs.sql"])
+            self.assertEqual(len(applied), 14)
             with plat.read() as c:
                 self.assertEqual(c.execute("SELECT COUNT(*) FROM members").fetchone()[0], 1)
                 self.assertTrue(L.verify_chain(c, "audit_log")["ok"])
@@ -640,7 +640,7 @@ class TestMigration018(unittest.TestCase):
             db = Database(d / "p.db", extra_migrations_dir=tenancy.PLATFORM_MIGRATIONS_DIR)
             applied = db.migrate(backup_dir=d / "bk")
             self.assertEqual(applied[0], "014_balance_transfers.sql")
-            self.assertEqual(applied[-2:], ["018_tenants.sql", "019_games.sql"])
+            self.assertEqual(applied[-3:], ["018_tenants.sql", "019_games.sql", "020_member_dm_prefs.sql"])
             self.assertEqual(len(list((d / "bk").glob("pre-migration-*.db"))), 1)
             with db.read() as c:
                 self.assertEqual(c.execute("SELECT COUNT(*) FROM members").fetchone()[0], 2)
@@ -652,7 +652,7 @@ class TestMigration018(unittest.TestCase):
     def test_old_migrations_are_untouched_and_a_clashing_version_is_refused(self):
         import hashlib
         sums = {f.name: hashlib.sha256(f.read_bytes()).hexdigest() for f in DBMOD.MIGRATIONS_DIR.glob("*.sql")}
-        self.assertEqual(len(sums), 18)                                      # 001-017 and 019: 018 belongs to the platform-only directory
+        self.assertEqual(len(sums), 19)                                      # 001-017, 019 and 020: 018 belongs to the platform-only directory
         self.assertFalse(any(n.startswith("018") for n in sums))
         with tempfile.TemporaryDirectory() as t:
             d = Path(t)

@@ -14,6 +14,9 @@
 3. `/gameset configure open_games:True` (refuses while the prize table is empty). Also: spins per day, reset hour (UTC), a required role,
    who sees results and where, the animation, and a **daily prize budget in dollars** (once reached, only no-prize results can come up).
 4. `/gameset panel` posts the panel with buttons (SPIN / My stats / Leaderboard / Prizes). It keeps working after restarts.
+   If results are posted in the **same channel** as the panel, the panel is re-posted below each result so it is always the last message
+   (the old copy is removed; several results at once share one move). Switch off with `/gameset configure panel_stays_last:False`.
+   It only follows the bot's own results: other people's chat messages can still push it up.
 5. `/gameset payouts` lists prizes waiting. `/gameset pay` pays them (see below). `/gameset cancel` cancels an unpaid prize (reason kept).
 6. `/gameset newseason` restarts the leaderboard. Nothing is deleted.
 
