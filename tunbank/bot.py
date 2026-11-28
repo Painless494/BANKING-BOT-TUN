@@ -9,7 +9,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from . import cmds_admin, cmds_audit, cmds_backup, cmds_bulk, cmds_chart, cmds_convert, cmds_deposit, cmds_disburse, cmds_games, cmds_grant, cmds_loan, cmds_panel, cmds_report, cmds_shared_offshore, cmds_trade, cmds_offshore, cmds_econ, cmds_help, cmds_market, cmds_member
+from . import cmds_admin, cmds_audit, cmds_backup, cmds_bulk, cmds_chart, cmds_convert, cmds_deposit, cmds_disburse, cmds_dm, cmds_games, cmds_grant, cmds_loan, cmds_panel, cmds_report, cmds_shared_offshore, cmds_trade, cmds_offshore, cmds_econ, cmds_help, cmds_market, cmds_member
 from . import ledger as L
 from .alerts import AlertService
 from .credentials import Crypto
@@ -137,6 +137,7 @@ class TunBankBot(commands.Bot):
         cmds_trade.register(trade, svc)
         cmds_shared_offshore.register(offshore_grp, svc)
         cmds_report.register(economy, svc)
+        cmds_dm.register(nation, svc)
         cmds_games.register(games, gameset, svc)
         self.add_view(svc.panel_view())                                # the banking panel keeps working after restarts
         self.add_view(svc.game_panel_view())                           # the spin panel keeps working after restarts

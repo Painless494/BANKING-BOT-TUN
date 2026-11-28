@@ -438,9 +438,12 @@ class AlertService:
             self._log(card, f"econ:{chan_id}", False, str(exc)[:200])
             log.warning("ECON alert failed: %s", exc)
 
-    async def dm(self, discord_id, card: Card):
+    async def dm(self, discord_id, card: Card, category: str | None = None):
+        """A direct DM. `category` (deposits / withdrawals / transfers / changes) decides which staff and member switches apply."""
+        from . import dmprefs
         with self.db.read() as conn:
-            if not cfg_bool(conn, "dm_members"):
+            send, _why = dmprefs.decide(conn, category=category, discord_id=discord_id)
+            if not send:
                 return
         if not (self.bot and discord_id):
             return
@@ -455,7 +458,7 @@ class AlertService:
         """Deliver queued member DMs. A failure is recorded for staff and NEVER touches the transaction it describes."""
         import asyncio
 
-        from . import notify
+        from . import dmprefs, notify
 
         if not self.bot:
             return                                   # nothing can be delivered yet; rows stay queued
@@ -465,11 +468,12 @@ class AlertService:
         async with lock:
             with self.db.read() as conn:
                 rows = [dict(r) for r in notify.pending(conn, limit)]
-                enabled = cfg_bool(conn, "dm_members")
+                decisions = {r["id"]: dmprefs.decide(conn, category=dmprefs.category_of(r["kind"]), nation_id=r["nation_id"], kind=r["kind"]) for r in rows}
             for r in rows:
                 status, err = "SENT", None
-                if not enabled:
-                    status, err = "SKIPPED", "member DMs are switched off (dm_members)"
+                send, why = decisions[r["id"]]
+                if not send:
+                    status, err = "SKIPPED", why
                 else:
                     try:
                         card = member_event_card(json.loads(r["payload_json"]))

@@ -198,7 +198,12 @@ def load_settings() -> Settings:
 # key -> (default, description)
 DEFAULTS: dict[str, tuple[str, str]] = {
     "econ_log_channel_id": ("", "Discord channel ID for the private ECON log"),
-    "dm_members": ("1", "1 = DM members when their account changes"),
+    "dm_members": ("1", "1 = DM members when their account changes (master switch for every bank DM)"),
+    "dm_deposits": ("1", "1 = DM a member when a deposit of theirs is credited"),
+    "dm_withdrawals": ("1", "1 = DM a member when money is withdrawn from their account (including outside TUN Bank)"),
+    "dm_transfers": ("1", "1 = DM members about balance transfers between members"),
+    "dm_changes": ("1", "1 = DM a member about staff changes: adjustments, reserved/released funds, loans settled from their deposit"),
+    "dm_member_choice": ("0", "1 = members may switch the bank DMs above off for themselves with /nation alerts"),
     "price_ttl_seconds": ("300", "How long market prices are cached"),
     "price_stale_seconds": ("1800", "Prices older than this are flagged STALE"),
     "price_change_warn_pct": ("40", "Warn when a price moves more than this % between snapshots"),
@@ -263,6 +268,7 @@ DEFAULTS: dict[str, tuple[str, str]] = {
     "spin_daily_prize_cap": ("0", "Most prize value (in dollars) the spin may hand out per day. 0 = no cap. Needs live prices"),
     "spin_panel_title": ("🎰 Spin of Fortune", "Title of the spin panel"),
     "spin_panel_text": ("Press **SPIN** for your daily prize! Prizes are paid by the alliance bank after staff approve them.", "Text of the spin panel"),
+    "spin_panel_stay_last": ("1", "1 = when results are posted in the panel's own channel, the panel is re-posted below them so it is always the last message"),
     "spin_panel_channel_id": ("", "Where the spin panel was posted (set by /gameset panel)"),
     "spin_panel_message_id": ("", "The spin panel message (set by /gameset panel)"),
     "no_daily_cash_enabled": ("0", "1 = the no_daily_cash option of /transfer raws may be used. Off until the exact rule is confirmed by the owner (the current calculation is a placeholder)"),

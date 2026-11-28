@@ -82,7 +82,7 @@ class Services:
                 if r["cash_after"] < 0:
                     d.add("You still owe", f"**{LN.dollars(-r['cash_after'])}**. It now shows as a negative cash balance in your account. "
                                            "New deposits of cash reduce it.")
-                await self.alerts.dm(m, d)
+                await self.alerts.dm(m, d, category="changes")
         if auto:
             return len(done)
 
@@ -269,7 +269,7 @@ async def post_outcomes(svc: Services, outcomes):
             if o.kind == "CREDIT":
                 await svc.alerts.econ(A.deposit_card(o, name))
                 if o.before is not None:
-                    await svc.alerts.dm(svc.alerts.discord_id_for(o.nation_id), A.member_deposit_dm(o))
+                    await svc.alerts.dm(svc.alerts.discord_id_for(o.nation_id), A.member_deposit_dm(o), category="deposits")
             elif o.kind in ("DONATION", "LOAN", "REVIEW", "OUTGOING_LINKED", "EXTERNAL_OUTFLOW", "OFFSHORE"):
                 await svc.alerts.econ(A.classified_card(o, name))
             elif o.kind == "EXTERNAL_WITHDRAWAL":

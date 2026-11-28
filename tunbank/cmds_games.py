@@ -46,7 +46,7 @@ def register(games: app_commands.Group, gameset: app_commands.Group, svc: Servic
             return {
                 "on": cfg_int(conn, "games_enabled") == 1 and cfg_int(conn, "spin_enabled") == 1, "per_day": max(cfg_int(conn, "spin_per_day"), 0),
                 "hour": min(max(cfg_int(conn, "games_day_start_hour_utc"), 0), 23), "cap": cfg_int(conn, "spin_daily_prize_cap") * 100,
-                "anim": cfg_int(conn, "spin_animation") == 1, "role": cfg_get(conn, "games_play_role_id").strip(),
+                "anim": cfg_int(conn, "spin_animation") == 1, "stay": cfg_int(conn, "spin_panel_stay_last") == 1, "role": cfg_get(conn, "games_play_role_id").strip(),
                 "public": cfg_get(conn, "games_public_results") or "all", "announce": cfg_get(conn, "games_announce_channel_id").strip(),
                 "season": cfg_get(conn, "games_season_start"), "board": max(cfg_int(conn, "games_leaderboard_size"), 1),
             }
@@ -103,7 +103,7 @@ def register(games: app_commands.Group, gameset: app_commands.Group, svc: Servic
                 await reply(interaction, card=card)
         except (discord.HTTPException, AttributeError):
             await reply(interaction, card=card)
-        await announce(interaction, res, member, st)
+        await keep_panel_last(interaction, await announce(interaction, res, member, st))
 
     def result_card(res: G.PlayResult, member, stats: dict, st: dict) -> A.Card:
         o = res.outcome
@@ -127,7 +127,7 @@ def register(games: app_commands.Group, gameset: app_commands.Group, svc: Servic
         o = res.outcome
         mode = st["public"]
         if mode == "none" or (mode == "wins" and not o.pays) or (mode == "jackpots" and not (o.jackpot and o.pays)):
-            return
+            return None
         if o.jackpot and o.pays:
             c = A.Card("💰 JACKPOT!", f"🎉 <@{interaction.user.id}> hit the jackpot!\n\n🏆 **{o.label}**", GOLD)
         elif o.pays:
@@ -145,6 +145,64 @@ def register(games: app_commands.Group, gameset: app_commands.Group, svc: Servic
             await target.send(embed=A.to_embed(c))
         except (discord.HTTPException, AttributeError):
             log.info("could not post the public spin result (missing channel permission?)")
+            return None
+        return target
+
+    # ---- keeping the panel at the bottom of its channel
+    keep_state: dict = {}
+
+    async def put_panel(client, target, actor: str):
+        """Post a fresh panel in `target`, then remove the previous one and remember the new one. None if it could not be posted."""
+        with svc.db.read() as conn:
+            saved, old_msg = cfg_get(conn, "spin_panel_channel_id"), cfg_get(conn, "spin_panel_message_id")
+        old = None
+        if old_msg.strip().isdigit() and saved.strip().isdigit() and client is not None:
+            try:
+                old_ch = client.get_channel(int(saved)) or await client.fetch_channel(int(saved))
+                old = await old_ch.fetch_message(int(old_msg))
+            except (discord.HTTPException, AttributeError):
+                old = None
+        try:
+            msg = await target.send(embed=A.to_embed(panel_card()), view=SpinPanelView())      # post first: the channel is never left without a panel
+        except (discord.HTTPException, AttributeError):
+            return None
+        if old is not None:
+            try:
+                await old.delete()
+            except discord.HTTPException:
+                pass
+
+        def keep():
+            with svc.db.tx() as conn:
+                cfg_set(conn, "spin_panel_channel_id", str(target.id), actor)
+                cfg_set(conn, "spin_panel_message_id", str(msg.id), actor)
+        await asyncio.to_thread(keep)
+        return msg
+
+    async def keep_panel_last(interaction, posted_in):
+        """A result was just posted in `posted_in`. If that is the panel's own channel, move the panel back to the bottom.
+
+        Several results at once are handled in order and share one move: a result posted before the move started is already covered by it."""
+        if posted_in is None:
+            return
+        with svc.db.read() as conn:
+            stay = cfg_int(conn, "spin_panel_stay_last") == 1
+            panel_channel = cfg_get(conn, "spin_panel_channel_id").strip()
+        if not stay or not panel_channel.isdigit() or str(getattr(posted_in, "id", "")) != panel_channel:
+            return
+        from . import tenantctx
+        st = keep_state.setdefault(tenantctx.current_key(), {"lock": asyncio.Lock(), "want": 0, "done": 0})
+        st["want"] += 1
+        mine = st["want"]
+        async with st["lock"]:
+            if st["done"] >= mine:
+                return                                                    # a move that started after my result already covered it
+            covered = st["want"]
+            try:
+                await put_panel(getattr(interaction, "client", None), posted_in, "system:panel")
+            except Exception:  # noqa: BLE001 - a panel that fails to move must never affect the spin that was already recorded
+                log.exception("could not move the spin panel to the bottom")
+            st["done"] = covered
 
     # ------------------------------------------------------------------------------------------------ player views
     def prizes_card() -> A.Card:
@@ -306,6 +364,7 @@ def register(games: app_commands.Group, gameset: app_commands.Group, svc: Servic
                 c.add("Cost to the alliance", "Can't be worked out yet: some prize has no price (or live prices are down).")
         else:
             c.add("Prize table", "**Empty.** Use `/gameset defaults` to load the classic prizes, or `/gameset prize` to add your own.")
+        c.add("Panel stays last", "✅ yes: re-posted below each result in its own channel" if st["stay"] else "⬜ no", True)
         c.add("Prize budget", f"{fmt.dollars(st['cap'])} per day" if st["cap"] else "No daily cap (set one with `/gameset configure`)", True)
         if waiting:
             c.add("Waiting to be paid", f"**{len(waiting)}** prize(s) worth {fmt.amounts_with_value(_sum(waiting), None)}. Pay them with `/gameset pay`.")
@@ -321,12 +380,12 @@ def register(games: app_commands.Group, gameset: app_commands.Group, svc: Servic
     @app_commands.describe(open_games="Open or close all games", spins_per_day="Spins per member per day", reset_hour="UTC hour the day resets (0-23)",
                            role="Only this role may play (use clear_role to allow everyone)", clear_role="Allow every linked member again",
                            results="Who sees results in the channel", results_channel="Channel for public results",
-                           animation="Spinning animation", prize_budget_usd="Most prize value per day in dollars (0 = no cap)")
+                           animation="Spinning animation", panel_stays_last="Keep the panel as the last message when results are posted in its channel", prize_budget_usd="Most prize value per day in dollars (0 = no cap)")
     @app_commands.choices(results=PUBLIC)
     async def configure(interaction: discord.Interaction, open_games: Optional[bool] = None, spins_per_day: Optional[app_commands.Range[int, 0, 20]] = None,
                         reset_hour: Optional[app_commands.Range[int, 0, 23]] = None, role: Optional[discord.Role] = None, clear_role: bool = False,
                         results: Optional[app_commands.Choice[str]] = None, results_channel: Optional[discord.TextChannel] = None,
-                        animation: Optional[bool] = None, prize_budget_usd: Optional[app_commands.Range[int, 0, 10_000_000_000]] = None):
+                        animation: Optional[bool] = None, panel_stays_last: Optional[bool] = None, prize_budget_usd: Optional[app_commands.Range[int, 0, 10_000_000_000]] = None):
         changes: dict = {}
         flag = lambda b: "1" if b else "0"   # noqa: E731
         if open_games is not None:
@@ -345,6 +404,8 @@ def register(games: app_commands.Group, gameset: app_commands.Group, svc: Servic
             changes["games_announce_channel_id"] = str(results_channel.id)
         if animation is not None:
             changes["spin_animation"] = flag(animation)
+        if panel_stays_last is not None:
+            changes["spin_panel_stay_last"] = flag(panel_stays_last)
         if prize_budget_usd is not None:
             changes["spin_daily_prize_cap"] = str(prize_budget_usd)
         if not changes:
@@ -430,34 +491,15 @@ def register(games: app_commands.Group, gameset: app_commands.Group, svc: Servic
             return
         await thinking(interaction)
         with svc.db.read() as conn:
-            saved, old_msg = cfg_get(conn, "spin_panel_channel_id"), cfg_get(conn, "spin_panel_message_id")
+            saved = cfg_get(conn, "spin_panel_channel_id")
         target = channel
         client = getattr(interaction, "client", None)
         if target is None and saved.strip().isdigit() and client is not None:
             target = client.get_channel(int(saved))
         target = target or getattr(interaction, "channel", None)
-        old = None
-        if old_msg.strip().isdigit() and saved.strip().isdigit() and client is not None:
-            try:
-                old_ch = client.get_channel(int(saved)) or await client.fetch_channel(int(saved))
-                old = await old_ch.fetch_message(int(old_msg))
-            except (discord.HTTPException, AttributeError):
-                old = None
-        try:
-            msg = await target.send(embed=A.to_embed(panel_card()), view=SpinPanelView())
-        except (discord.HTTPException, AttributeError):
+        msg = await put_panel(client, target, uid(interaction))
+        if msg is None:
             return await reply(interaction, "I couldn't post there. Check that I can send messages and embeds in that channel.")
-        if old is not None:
-            try:
-                await old.delete()
-            except discord.HTTPException:
-                pass
-
-        def keep():
-            with svc.db.tx() as conn:
-                cfg_set(conn, "spin_panel_channel_id", str(target.id), uid(interaction))
-                cfg_set(conn, "spin_panel_message_id", str(msg.id), uid(interaction))
-        await asyncio.to_thread(keep)
         await reply(interaction, f"The spin panel is posted in {getattr(target, 'mention', 'this channel')}.")
 
     @gameset.command(name="newseason", description="MINISTER: start a fresh leaderboard (nothing is deleted; all-time stays available)")

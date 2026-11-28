@@ -209,7 +209,7 @@ def register(bank: app_commands.Group, svc: Services):
         out = A.lock_card("LOCK", nation_id, parsed, val, reason, res["lock_id"], res, actor_label(interaction))
         await reply(interaction, card=out)
         await svc.alerts.econ(out)
-        await svc.alerts.dm(m["discord_id"], out)
+        await svc.alerts.dm(m["discord_id"], out, category="changes")
 
     @bank.command(name="release", description="ECON: move LOCKED funds back to AVAILABLE")
     @app_commands.describe(lock_id="Lock ID", amounts="Leave empty to release everything left", reason="Why")
@@ -250,7 +250,7 @@ def register(bank: app_commands.Group, svc: Services):
         await reply(interaction, card=out)
         await svc.alerts.econ(out)
         if m:
-            await svc.alerts.dm(m["discord_id"], out)
+            await svc.alerts.dm(m["discord_id"], out, category="changes")
 
     # -------------------------------------------------------------- /bank withdraw
     SOURCES = [app_commands.Choice(name="ALLIANCE (alliance-owned funds)", value="ALLIANCE"),
