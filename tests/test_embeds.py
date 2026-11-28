@@ -61,6 +61,7 @@ class TestSending(TC.Cmd):
         from tunbank.ui import confirm
         j = FD.FakeInteraction(self.admin)
         j.auto_confirm = True
+        self.run_async(j.response.defer(ephemeral=True, thinking=True))                 # real commands acknowledge before confirming
         ok = self.run_async(confirm(self.svc, j, monster()))
         self.assertTrue(ok)
         msgs = [m for m in j.sent if m.get("embed")]

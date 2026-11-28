@@ -298,11 +298,22 @@ class Games(unittest.TestCase):
         i.command = types.SimpleNamespace(qualified_name="games spin")
         i.channel = self.chan
         i.client = getattr(self, "client", None)
-        if via == "button":
-            self.run_async(self.svc.game_panel_view().play(i, None))
-        else:
-            self.run_async(self.games.commands["spin"].callback(i))
+
+        async def go():
+            if via == "button":
+                await self.svc.game_panel_view().play(i, None)
+            else:
+                await self.games.commands["spin"].callback(i)
+            await self.settle()
+        self.run_async(go())
         return i
+
+    tasks = None
+
+    async def settle(self):
+        """Wait for the panel mover(s) that Discord's message events started."""
+        while self.tasks:
+            await self.tasks.pop()
 
     def open(self, rows=None):
         self.prizes(rows or [("300 steel", 1, {"steel": 30000}, 30, False)])
@@ -417,8 +428,21 @@ class Games(unittest.TestCase):
         self.assertIn("waiting", self.call(self.games, "history", self.alice).text().lower())
         o = self.call(self.games, "prizes", self.alice).text()
         self.assertIn("300 steel", o)
-        self.assertIn("100.0%", o)
+        self.assertNotIn("%", o)                                                  # members never see the odds by default
         self.assertIn("link", self.call(self.games, "stats", self.alice, discord.User(777, "x")).text().lower())
+
+    def test_odds_stay_hidden_from_members_unless_staff_turn_them_on(self):
+        self.open([("300 steel", 1, {"steel": 30000}, 30, False), ("Try again", 1, {}, 0, False)])
+        won = self.spin().text()
+        self.assertNotIn("Chance", won)
+        self.assertNotIn("%", won)
+        self.assertNotIn("%", self.call(self.games, "prizes", self.alice).text())
+        self.assertNotIn("Try again", self.call(self.games, "prizes", self.alice).text())      # nor that a blank result exists
+        self.assertIn("%", self.call(self.gameset, "show", self.admin).text())                 # staff always see them
+        self.cfg(games_show_odds=1)
+        self.assertIn("50.0%", self.call(self.games, "prizes", self.alice).text())
+        with self.db.read() as c:                                                              # and every spin still records the odds it used
+            self.assertIn("chance_pct", c.execute("SELECT odds_json FROM game_plays").fetchone()[0])
 
     def test_new_season_resets_the_leaderboard_but_deletes_nothing(self):
         self.open()
@@ -589,14 +613,21 @@ class Games(unittest.TestCase):
         self.assertIn("Game prizes", rep.expenditure)
 
     # ---- the panel stays the last message
-    def room(self, spin_in_same_channel=True):
-        """A channel that remembers its messages in order, and a client that can find it."""
+    BOT_ID, HUMAN_ID = 31337, 999
+
+    def room(self):
+        """A channel that remembers its messages in order. Every message sent into it also raises the same event Discord's gateway would."""
         outer = self
         msgs = []
+        self.tasks = []
+        self.fail_sends = False
 
         class Msg:
-            def __init__(self, embed, view):
+            def __init__(self, embed, view, author):
                 self.id, self.embed, self.view, self.deleted = 7000 + len(msgs), embed, view, False
+                self.author = types.SimpleNamespace(id=author)
+                self.components = [object()] if view is not None else []
+                self.channel = room
                 msgs.append(self)
 
             async def delete(self):
@@ -606,10 +637,17 @@ class Games(unittest.TestCase):
             id = 5150
             mention = "#spin"
 
+            async def event(self, msg):                                 # what the bot's on_message does for every message
+                t = await outer.svc.game_panel_touch(msg, outer.client)
+                if t is not None and t not in outer.tasks:
+                    outer.tasks.append(t)
+
             async def send(self, embed=None, view=None, **kw):
                 if outer.fail_sends and view is not None:
                     raise discord.HTTPException()
-                return Msg(embed, view)
+                m = Msg(embed, view, outer.BOT_ID)
+                await self.event(m)
+                return m
 
             async def fetch_message(self, mid):
                 for m in msgs:
@@ -617,18 +655,38 @@ class Games(unittest.TestCase):
                         return m
                 raise discord.HTTPException()
         room = Room()
-        self.client = types.SimpleNamespace(get_channel=lambda cid: room if cid == 5150 else None, fetch_channel=None)
+        self.client = types.SimpleNamespace(get_channel=lambda cid: room if cid == 5150 else None, fetch_channel=None, user=types.SimpleNamespace(id=self.BOT_ID))
         self.chan = room
-        self.fail_sends = False
+        self.room_obj = room
+        self.msgs = msgs
         return room, msgs
 
     def alive(self, msgs):
-        return [("panel" if m.view is not None else "result") for m in msgs if not m.deleted]
+        return [("panel" if m.view is not None else "result" if m.author.id == self.BOT_ID else "chat") for m in msgs if not m.deleted]
+
+    def say(self, text="hello", channel=None):
+        """A member writes in the channel."""
+        async def go():
+            room = channel or self.room_obj
+            m = types.SimpleNamespace(id=9000 + len(self.msgs) + 1, author=types.SimpleNamespace(id=self.HUMAN_ID), components=[], channel=room, deleted=False, view=None)
+            if room is self.room_obj:
+                self.msgs.append(m)
+            t = await self.svc.game_panel_touch(m, self.client)
+            if t is not None:
+                self.tasks.append(t)
+            await self.settle()
+        self.run_async(go())
 
     def post_panel(self, room):
-        i = FI(self.admin)
-        i.channel, i.client = room, self.client
-        self.run_async(self.gameset.commands["panel"].callback(i, room))
+        async def go():
+            i = FI(self.admin)
+            i.channel, i.client = room, self.client
+            await self.gameset.commands["panel"].callback(i, room)
+            await self.settle()
+        self.run_async(go())
+
+    def panels_posted(self, msgs):
+        return sum(m.view is not None for m in msgs)
 
     def test_panel_moves_back_below_a_result_posted_in_its_own_channel(self):
         self.open()
@@ -642,7 +700,72 @@ class Games(unittest.TestCase):
         self.spin(self.bob)
         self.assertEqual(self.alive(msgs), ["result", "result", "panel"])
 
-    def test_a_result_in_another_channel_leaves_the_panel_alone(self):
+    def test_any_message_in_the_channel_moves_the_panel_back_to_the_bottom(self):
+        self.open()
+        room, msgs = self.room()
+        self.post_panel(room)
+        self.say("hi everyone")
+        self.assertEqual(self.alive(msgs), ["chat", "panel"])
+        self.say("anyone spun yet?")
+        self.assertEqual(self.alive(msgs), ["chat", "chat", "panel"])
+        self.assertEqual(self.panels_posted(msgs), 3)                          # one move per message, and the panel's own post never causes another
+
+    def test_the_panels_own_messages_never_start_a_loop(self):
+        self.open()
+        room, msgs = self.room()
+        self.post_panel(room)
+        self.say()
+        self.assertEqual(self.panels_posted(msgs), 2)
+        self.assertEqual(self.tasks, [])
+
+    def test_a_burst_of_messages_causes_few_moves_and_ends_with_one_panel_last(self):
+        self.open()
+        room, msgs = self.room()
+        self.post_panel(room)
+
+        async def burst():
+            for n in range(12):
+                m = types.SimpleNamespace(id=9500 + n, author=types.SimpleNamespace(id=self.HUMAN_ID), components=[], channel=room, deleted=False, view=None)
+                msgs.append(m)
+                t = await self.svc.game_panel_touch(m, self.client)
+                if t is not None and t not in self.tasks:
+                    self.tasks.append(t)
+            await self.settle()
+        self.run_async(burst())
+        alive = self.alive(msgs)
+        self.assertEqual((alive.count("panel"), alive[-1], alive.count("chat")), (1, "panel", 12))
+        self.assertLessEqual(self.panels_posted(msgs), 3)                      # not one per message
+
+    def test_moves_are_paced_so_a_busy_channel_is_not_hammered(self):
+        self.open()
+        room, msgs = self.room()
+        self.post_panel(room)
+        self.slept.clear()
+        self.say()
+        self.assertIn(3.0, self.slept)                                         # waits for a burst to settle
+        self.assertIn(8, self.slept)                                           # and rests between moves (spin_panel_min_seconds)
+        self.cfg(spin_panel_min_seconds=20)
+        self.mod_watch_reset()
+        self.slept.clear()
+        self.say()
+        self.assertIn(20, self.slept)
+
+    def mod_watch_reset(self):
+        self.post_panel(self.room_obj)            # the bot re-reads the panel's settings after a minute, or whenever the panel is re-posted
+
+    def test_messages_elsewhere_and_a_switched_off_setting_leave_the_panel_alone(self):
+        self.open()
+        room, msgs = self.room()
+        self.post_panel(room)
+        elsewhere = types.SimpleNamespace(id=1)
+        self.say("not in the panel channel", channel=elsewhere)
+        self.assertEqual(self.alive(msgs), ["panel"])
+        self.cfg(spin_panel_stay_last=0)
+        self.post_panel(room)                                                  # refreshes what the bot has cached
+        self.say()
+        self.assertEqual(self.alive(msgs)[-1], "chat")                         # switched off: the panel stays where it is
+
+    def test_a_result_in_another_channel_does_not_move_the_panel(self):
         self.open()
         room, msgs = self.room()
         self.post_panel(room)
@@ -653,40 +776,7 @@ class Games(unittest.TestCase):
         self.assertEqual(self.alive(msgs), ["panel"])
         self.assertEqual(len(other.sent), 1)
 
-    def test_the_setting_can_switch_it_off_and_quiet_results_do_not_move_it(self):
-        self.open()
-        room, msgs = self.room()
-        self.post_panel(room)
-        self.cfg(spin_panel_stay_last=0)
-        self.spin()
-        self.assertEqual(self.alive(msgs), ["panel", "result"])
-        self.cfg(spin_panel_stay_last=1, games_public_results="none", spin_per_day=5)
-        self.spin(self.bob)
-        self.assertEqual(self.alive(msgs), ["panel", "result"])               # nothing was posted, so nothing moved
-
-    def test_many_results_at_once_leave_exactly_one_panel_at_the_bottom(self):
-        self.open()
-        with self.db.tx() as c:
-            for n in range(3, 9):
-                c.execute("INSERT INTO members(nation_id,nation_name,discord_id,created_at) VALUES(?,?,?,?)", (n, f"N{n}", str(1000 + n), "x"))
-        room, msgs = self.room()
-        self.post_panel(room)
-
-        async def burst():
-            ins = []
-            for uid_ in [111, 112] + [1000 + n for n in range(3, 9)]:
-                i = FI(discord.User(uid_, "u"))
-                i.channel, i.client = room, self.client
-                ins.append(i)
-            await asyncio.gather(*(self.games.commands["spin"].callback(i) for i in ins))
-        self.run_async(burst())
-        alive = self.alive(msgs)
-        self.assertEqual(alive.count("result"), 8)
-        self.assertEqual(alive.count("panel"), 1)
-        self.assertEqual(alive[-1], "panel")
-        self.assertLess(sum(m.view is not None for m in msgs), 9)               # fewer panel posts than results: they share moves
-
-    def test_a_panel_that_cannot_be_moved_never_breaks_the_spin(self):
+    def test_a_panel_that_cannot_be_moved_never_breaks_anything(self):
         self.open()
         room, msgs = self.room()
         self.post_panel(room)
@@ -696,6 +786,21 @@ class Games(unittest.TestCase):
         with self.db.read() as c:
             self.assertEqual(c.execute("SELECT COUNT(*) FROM game_prizes").fetchone()[0], 1)
         self.assertEqual(self.alive(msgs), ["panel", "result"])               # the old panel is kept when a new one can't be posted
+
+    def test_the_bots_on_message_hands_every_server_message_to_the_alliance_in_context(self):
+        from tunbank import bot as botmod
+        seen = []
+
+        async def touch(message, client=None):
+            from tunbank import tenantctx
+            seen.append((message.id, tenantctx.current_key()))
+        bot = botmod.TunBankBot.__new__(botmod.TunBankBot)
+        bot.tenants, bot.settings = None, types.SimpleNamespace(guild_id=77)
+        bot.reg = types.SimpleNamespace(game_panel_touch=touch)
+        msg = lambda gid, mid: types.SimpleNamespace(id=mid, guild=types.SimpleNamespace(id=gid) if gid else None)   # noqa: E731
+        for m in (msg(77, 1), msg(5, 2), msg(None, 3)):
+            self.run_async(bot.on_message(m))
+        self.assertEqual(seen, [(1, "home")])                                  # other servers and DMs are ignored in single-alliance mode
 
     # ---- structure
     def test_panel_buttons_have_unique_stable_ids(self):

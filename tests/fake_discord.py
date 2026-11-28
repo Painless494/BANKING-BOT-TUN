@@ -285,6 +285,9 @@ def install():
     tasks.loop = loop
     ext.commands, ext.tasks = commands, tasks
 
+    class NotFound(HTTPException):
+        """Discord's 404 (for example error 10015, Unknown Webhook)."""
+    d.NotFound = NotFound
     d.HTTPException, d.Embed, d.File, d.Object, d.Intents = HTTPException, Embed, File, Object, Intents
     d.Attachment, d.Role, d.User, d.TextChannel, d.ButtonStyle = Attachment, Role, User, TextChannel, ButtonStyle
     d.Member = User
@@ -348,6 +351,8 @@ class FakeInteraction:
             self._done = True
 
         async def send_message(self, content=None, **kw):
+            if self._done:                                      # Discord: InteractionResponded, a second initial response
+                raise RuntimeError("This interaction has already been responded to before")
             check_embed(kw.get("embed"))
             self._done = True
             self.i.sent.append({"content": content, **kw})
@@ -365,6 +370,9 @@ class FakeInteraction:
             self.i = i
 
         async def send(self, content=None, **kw):
+            import discord
+            if not self.i.response._done:                       # exactly what Discord does: a follow-up needs the interaction acknowledged first
+                raise discord.NotFound("404 Not Found (error code: 10015): Unknown Webhook")
             check_embed(kw.get("embed"))
             self.i.sent.append({"content": content, **kw})
             view = kw.get("view")
