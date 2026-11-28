@@ -331,6 +331,29 @@ class TestIsolation(Env):
         self.assertEqual(sent, [GUILD_A])
 
 
+class TestGamesAcrossAlliances(Env):
+    def test_prizes_plays_and_settings_of_one_alliance_never_reach_another(self):
+        from tunbank import games as G
+        ta, tb = self.two_alliances()
+        for t in (ta, tb):
+            with t.db.tx() as c:
+                c.execute("INSERT INTO members(nation_id,nation_name,discord_id,created_at) VALUES(7,'Seven','4242','x')")
+        with ta.db.tx() as c:
+            cfg_set(c, "games_enabled", "1", "t")
+            cfg_set(c, "spin_animation", "0", "t")
+            G.save_outcome(c, "spin", "t", outcome_id=None, label="coal", weight=1, amounts={"coal": 100}, score=5, jackpot=False, enabled=True)
+        self.assertIn("coal", self.cmd(4242, GUILD_A, "games spin").text())
+        self.assertIn("closed", self.cmd(4242, GUILD_B, "games spin").text())           # B never opened its games
+        self.assertIn("closed", self.cmd(4242, HOME_GUILD, "games spin").text())
+        with ta.db.read() as c:
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM game_prizes").fetchone()[0], 1)
+        for other in (tb.db, self.db):
+            with other.read() as c:
+                self.assertEqual((c.execute("SELECT COUNT(*) FROM game_plays").fetchone()[0], c.execute("SELECT COUNT(*) FROM game_prizes").fetchone()[0]), (0, 0))
+        self.assertIn("permission", self.cmd(ADMIN_B, GUILD_A, "gameset pay").text().lower())     # another alliance's admin can't pay A's prizes
+        self.assertIs(self.bot.reg.game_panel_view, self.bot.reg.game_panel_view)                   # the panel view is shared; it picks its alliance per press
+
+
 class TestAuthorization(Env):
     def test_platform_commands_are_owner_only_and_home_server_only(self):
         self.assertIn("Only the platform owner", self.cmd(RANDOM, HOME_GUILD, "platform list").text())
@@ -561,11 +584,13 @@ class TestMigration018(unittest.TestCase):
             d = Path(t)
             pdb = Database(d / "platform.db", extra_migrations_dir=tenancy.PLATFORM_MIGRATIONS_DIR)
             applied = pdb.migrate()
-            self.assertEqual(applied[-1], "018_tenants.sql")
-            self.assertEqual(len(applied), 18)
+            self.assertEqual(applied[-2:], ["018_tenants.sql", "019_games.sql"])
+            self.assertEqual(len(applied), 19)
             self.assertEqual(pdb.migrate(), [])
             home = Database(d / "tunbank.db")
-            self.assertNotIn("018_tenants.sql", home.migrate())
+            applied_home = home.migrate()
+            self.assertNotIn("018_tenants.sql", applied_home)
+            self.assertIn("019_games.sql", applied_home)
             with home.read() as c:
                 self.assertIsNone(c.execute("SELECT 1 FROM sqlite_master WHERE name='tenants'").fetchone())
             pdb.close(); home.close()
@@ -587,8 +612,8 @@ class TestMigration018(unittest.TestCase):
             plat = Database(d / "p.db", extra_migrations_dir=tenancy.PLATFORM_MIGRATIONS_DIR)
             applied = plat.migrate(backup_dir=d / "bk")
             self.assertEqual(applied[0], "007_negative_balances_reset_restore_loans.sql")
-            self.assertEqual(applied[-1], "018_tenants.sql")
-            self.assertEqual(len(applied), 12)
+            self.assertEqual(applied[-2:], ["018_tenants.sql", "019_games.sql"])
+            self.assertEqual(len(applied), 13)
             with plat.read() as c:
                 self.assertEqual(c.execute("SELECT COUNT(*) FROM members").fetchone()[0], 1)
                 self.assertTrue(L.verify_chain(c, "audit_log")["ok"])
@@ -615,7 +640,7 @@ class TestMigration018(unittest.TestCase):
             db = Database(d / "p.db", extra_migrations_dir=tenancy.PLATFORM_MIGRATIONS_DIR)
             applied = db.migrate(backup_dir=d / "bk")
             self.assertEqual(applied[0], "014_balance_transfers.sql")
-            self.assertEqual(applied[-1], "018_tenants.sql")
+            self.assertEqual(applied[-2:], ["018_tenants.sql", "019_games.sql"])
             self.assertEqual(len(list((d / "bk").glob("pre-migration-*.db"))), 1)
             with db.read() as c:
                 self.assertEqual(c.execute("SELECT COUNT(*) FROM members").fetchone()[0], 2)
@@ -627,12 +652,12 @@ class TestMigration018(unittest.TestCase):
     def test_old_migrations_are_untouched_and_a_clashing_version_is_refused(self):
         import hashlib
         sums = {f.name: hashlib.sha256(f.read_bytes()).hexdigest() for f in DBMOD.MIGRATIONS_DIR.glob("*.sql")}
-        self.assertEqual(len(sums), 17)
+        self.assertEqual(len(sums), 18)                                      # 001-017 and 019: 018 belongs to the platform-only directory
         self.assertFalse(any(n.startswith("018") for n in sums))
         with tempfile.TemporaryDirectory() as t:
             d = Path(t)
             (d / "extra").mkdir()
-            (d / "extra" / "017_clash.sql").write_text("SELECT 1;")
+            (d / "extra" / "019_clash.sql").write_text("SELECT 1;")
             with self.assertRaises(DBMOD.DatabaseError):
                 Database(d / "x.db", extra_migrations_dir=d / "extra").migrate()
 

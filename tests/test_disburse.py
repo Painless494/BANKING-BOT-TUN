@@ -906,7 +906,7 @@ class TestMigration017(unittest.TestCase):
             before = {t: [tuple(r) for r in db.conn.execute(f"SELECT * FROM {t}")] for t in ("disbursement_batches", "disbursement_items")}
         finally:
             DBMOD.MIGRATIONS_DIR = real
-        self.assertEqual(db.migrate(backup_dir=d / "bk"), ["017_project_grants.sql"])
+        self.assertEqual(db.migrate(backup_dir=d / "bk"), ["017_project_grants.sql", "019_games.sql"])
         after = {t: [tuple(r) for r in db.conn.execute(f"SELECT * FROM {t}")] for t in ("disbursement_batches", "disbursement_items")}
         self.assertEqual(before, after)
         with db.tx() as c:                                                                           # the wider kind list is live, the guards still hold

@@ -21,6 +21,8 @@ NEEDED = {"bank": {"credit", "adjust", "review", "withdrawself", "deposit"},
           "grant": {"send", "warchest", "city", "infrastructure", "land", "project"},
           "transfer": {"raws"},
           "economy": {"report", "auto"},
+          "games": {"spin", "prizes", "stats", "leaderboard", "history"},
+          "gameset": {"show", "configure", "prize", "removeprize", "defaults", "panel", "newseason", "payouts", "pay", "cancel"},
           "grantset": {"show", "warchest", "infra", "land", "citycap", "dailycash", "rules", "live", "batch", "resume", "projects", "projectimport", "rule"},
           "offshore": {"wipe", "release", "assign", "reassign", "adjustownership"}}
 
