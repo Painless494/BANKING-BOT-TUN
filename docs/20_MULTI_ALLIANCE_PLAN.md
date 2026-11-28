@@ -1,3 +1,8 @@
+> **STATUS (built): the plan below was implemented as Option B. See `docs/24_MULTI_ALLIANCE_OPERATIONS.md` for how it works and how to add an
+> alliance.** Decisions taken by the owner: one database file per alliance; one Discord application for all; the owner approves each
+> alliance; each alliance supplies its own PnW keys; the shared offshore stays inside one alliance; only the owner can import project
+> costs / policy tables, correct grant rules and approve alliances. The text below is kept as the original assessment.
+
 # 20. Multi-alliance support: assessment and plan (Part A)
 
 ## Verdict

@@ -20,7 +20,9 @@ from tunbank.db import MIGRATIONS_DIR  # noqa: E402
 
 def show(path: Path) -> tuple[dict, bool]:
     info = BK.inventory(path)
-    known = sorted(int(f.name[:3]) for f in MIGRATIONS_DIR.glob("[0-9][0-9][0-9]_*.sql"))
+    from tunbank.tenancy import PLATFORM_MIGRATIONS_DIR
+    known = sorted(int(f.name[:3]) for f in list(MIGRATIONS_DIR.glob("[0-9][0-9][0-9]_*.sql"))
+                   + (list(PLATFORM_MIGRATIONS_DIR.glob("[0-9][0-9][0-9]_*.sql")) if path.name.startswith("platform") else []))
     problems = []
     if info["integrity_check"] != "ok":
         problems.append("SQLite integrity check failed")

@@ -20,6 +20,7 @@ NEEDED = {"bank": {"credit", "adjust", "review", "withdrawself", "deposit"},
           "bankset": {"config", "gate", "resetconfig", "iconpack", "backup", "icons"},
           "grant": {"send", "warchest", "city", "infrastructure", "land", "project"},
           "transfer": {"raws"},
+          "economy": {"report", "auto"},
           "grantset": {"show", "warchest", "infra", "land", "citycap", "dailycash", "rules", "live", "batch", "resume", "projects", "projectimport", "rule"},
           "offshore": {"wipe", "release", "assign", "reassign", "adjustownership"}}
 
@@ -88,6 +89,38 @@ async def run() -> int:
             problems.append(f"/{group} is missing: {sorted(missing)}")
     print("    " + " · ".join(f"/{g}: {len(n)}" for g, n in sorted(names.items()) if n))
     await bot.close()
+
+    # ---- the same, in multi-alliance mode (a platform database, the /setup and /platform groups, per-server sync)
+    os.environ["GUILD_ID"] = "111111111111111111"
+    mtmp = tempfile.mkdtemp(prefix="tunbank-check-multi-")
+    os.environ["DATA_DIR"] = mtmp
+    msettings = load_settings()
+    mdb = Database(msettings.db_path)
+    mdb.migrate(backup_dir=msettings.backup_dir)
+    from tunbank.tenancy import Platform
+    platform = Platform.open(msettings)
+    mbot = TunBankBot(msettings, mdb, platform)
+    msynced = {"global": [], "guild": []}
+
+    async def fake_sync_multi(*a, guild=None, **k):
+        try:
+            cmds = mbot.tree.get_commands(guild=guild) if guild is not None else mbot.tree.get_commands()
+            payload = [c.to_dict(mbot.tree) for c in cmds]
+        except TypeError:
+            payload = [c.to_dict() for c in cmds]
+        msynced["guild" if guild is not None else "global"].extend(payload)
+        return []
+    mbot.tree.sync = fake_sync_multi
+    await mbot.setup_hook()
+    home_names = {c["name"] for c in msynced["guild"]}
+    for needed in ("platform", "setup", "bank", "grantset"):
+        if needed not in home_names:
+            problems.append(f"multi-alliance mode: /{needed} is missing from the home server's commands")
+    for c in msynced["guild"]:
+        if len(c.get("options") or []) > 25:
+            problems.append(f"multi-alliance mode: /{c['name']} is over Discord's 25 subcommand limit")
+    print(f"OK  multi-alliance start-up: {len(msynced['guild'])} commands for the home server (platform group included)")
+    await mbot.close()
     if problems:
         print("FAIL")
         for p in problems:

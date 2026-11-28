@@ -46,3 +46,7 @@ python scripts/check_pnw_schema.py               # asks the LIVE PnW API whether
 python scripts/check_setup.py
 python -m unittest discover -s tests
 ```
+
+
+## Several alliances
+See `docs/24_MULTI_ALLIANCE_OPERATIONS.md` (off unless `MULTI_ALLIANCE=1`) and `docs/20_MULTI_ALLIANCE_PLAN.md`.

@@ -904,7 +904,7 @@ class Cmd(unittest.TestCase):
         from tunbank import bot as botmod
         b = botmod.TunBankBot(self.settings, self.db)
         self.run_async(b.setup_hook())
-        self.assertEqual(sorted(b.tree.cmds), ["audit", "bank", "bankset", "bulk", "chart", "deposit", "grant", "grantset", "ledger", "loan", "nation", "offshore", "tax", "trade", "transfer"])
+        self.assertEqual(sorted(b.tree.cmds), ["audit", "bank", "bankset", "bulk", "chart", "deposit", "economy", "grant", "grantset", "ledger", "loan", "nation", "offshore", "tax", "trade", "transfer"])
 
 
 class OffshoreCmd(Cmd):

@@ -1,5 +1,6 @@
 """TUN Bank - start here.  Run with:  python main.py"""
 import logging
+import os
 import sys
 
 from tunbank.config import ConfigError, load_settings
@@ -43,7 +44,20 @@ def main() -> int:
 
     from tunbank.bot import TunBankBot  # imported late so setup errors show first
 
-    bot = TunBankBot(settings, db)
+    platform = None
+    if os.environ.get("MULTI_ALLIANCE", "").strip().lower() in ("1", "true", "yes", "on"):
+        from tunbank.tenancy import Platform, TenancyError
+        try:
+            if not settings.guild_id:
+                raise TenancyError("MULTI_ALLIANCE needs GUILD_ID (the home alliance's server) to be set.")
+            platform = Platform.open(settings)
+            log.info("Multi-alliance mode ON. Platform database: %s", settings.data_dir / "platform.db")
+            if not settings.credential_key:
+                log.warning("CREDENTIAL_ENCRYPTION_KEY is not set: alliances cannot store their PnW keys until it is.")
+        except (TenancyError, DatabaseError) as exc:
+            print(f"\nMULTI-ALLIANCE PROBLEM:\n{exc}\n")
+            return 1
+    bot = TunBankBot(settings, db, platform)
     bot.run(settings.discord_token, log_handler=None)
     return 0
 

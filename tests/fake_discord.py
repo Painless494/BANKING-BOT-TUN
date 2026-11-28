@@ -231,16 +231,22 @@ def install():
         def get_commands(self):
             return list(self.cmds.values()) + list(getattr(self, "top", {}).values())
 
-        def add_command(self, g):
+        def add_command(self, g, guild=None, override=False):
+            if guild is not None:                      # a command registered for one server only
+                self.guild_cmds = getattr(self, "guild_cmds", {})
+                self.guild_cmds.setdefault(guild.id, {})[g.name] = g
+                return
             if g.name in self.cmds:
                 raise ValueError("duplicate group")
             self.cmds[g.name] = g
 
         def copy_global_to(self, guild):
-            pass
+            self.copied = getattr(self, "copied", [])
+            self.copied.append(getattr(guild, "id", None))
 
         async def sync(self, guild=None):
-            pass
+            self.synced = getattr(self, "synced", [])
+            self.synced.append(getattr(guild, "id", None))
 
     class Bot:
         def __init__(self, command_prefix=None, intents=None):
@@ -283,6 +289,7 @@ def install():
     d.Attachment, d.Role, d.User, d.TextChannel, d.ButtonStyle = Attachment, Role, User, TextChannel, ButtonStyle
     d.Member = User
     d.Interaction = Interaction
+    d.InteractionType = types.SimpleNamespace(autocomplete="autocomplete", application_command="application_command")
     d.TextStyle = TextStyle
     d.SelectOption = SelectOption
     d.ui, d.app_commands, d.ext = ui, ac, ext

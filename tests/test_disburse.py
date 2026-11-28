@@ -607,6 +607,7 @@ class TestOtherCommands(Base):
                                  stock=stock(coal=10, money=400000))
         self.nations[1]["military"]["soldiers"] = 10000
         self.cfg("daily_cash_threshold", "410000")
+        self.cfg("no_daily_cash_enabled", "1")
         self.call(self.xfer, "raws", self.admin, "1", 1.0, ALLI, no_cash=True, only_missing=True, note="a")
         a = json.loads(self.items(1)[0]["amounts_json"])
         self.assertNotIn("money", a)
@@ -614,6 +615,14 @@ class TestOtherCommands(Base):
         self.call(self.xfer, "raws", self.admin, "1", 1.0, ALLI, no_daily_cash=True, note="b")
         b = json.loads(self.items(2)[0]["amounts_json"])
         self.assertEqual(b["money"], 1000000)                                                              # capped at 410,000 - 400,000 = $10,000
+
+    def test_no_daily_cash_is_refused_while_disabled(self):
+        self.nations[1] = nation(1, 1, cities=[city(1000, 500, coal_power=2)], population=100000, stock=stock(money=400000))
+        self.cfg("daily_cash_threshold", "410000")
+        out = self.call(self.xfer, "raws", self.admin, "1", 1.0, ALLI, no_daily_cash=True, note="x").text()
+        self.assertIn("switched off", out)
+        self.assertEqual(self.batches(), [])
+        self.assertEqual(self.pnw.withdraw_calls, 0)
 
     def test_raws_validates_days(self):
         for days in (0, -1, 31):
